@@ -21,7 +21,6 @@ import { Route as InstancesIdRouteImport } from './routes/instances.$id'
 import { Route as DeploymentsIdRouteImport } from './routes/deployments.$id'
 import { Route as DefinitionsKeyRouteImport } from './routes/definitions.$key'
 import { Route as DefinitionsKeyVersionRouteImport } from './routes/definitions.$key.$version'
-import { Route as ApiMockSplatRouteImport } from './routes/api/mock/$'
 
 const JobsRoute = JobsRouteImport.update({
   id: '/jobs',
@@ -83,11 +82,6 @@ const DefinitionsKeyVersionRoute = DefinitionsKeyVersionRouteImport.update({
   path: '/$version',
   getParentRoute: () => DefinitionsKeyRoute,
 } as any)
-const ApiMockSplatRoute = ApiMockSplatRouteImport.update({
-  id: '/api/mock/$',
-  path: '/api/mock/$',
-  getParentRoute: () => rootRouteImport,
-} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -101,7 +95,6 @@ export interface FileRoutesByFullPath {
   '/definitions/': typeof DefinitionsIndexRoute
   '/deployments/': typeof DeploymentsIndexRoute
   '/jobs/': typeof JobsIndexRoute
-  '/api/mock/$': typeof ApiMockSplatRoute
   '/definitions/$key/$version': typeof DefinitionsKeyVersionRoute
 }
 export interface FileRoutesByTo {
@@ -113,7 +106,6 @@ export interface FileRoutesByTo {
   '/definitions': typeof DefinitionsIndexRoute
   '/deployments': typeof DeploymentsIndexRoute
   '/jobs': typeof JobsIndexRoute
-  '/api/mock/$': typeof ApiMockSplatRoute
   '/definitions/$key/$version': typeof DefinitionsKeyVersionRoute
 }
 export interface FileRoutesById {
@@ -129,7 +121,6 @@ export interface FileRoutesById {
   '/definitions/': typeof DefinitionsIndexRoute
   '/deployments/': typeof DeploymentsIndexRoute
   '/jobs/': typeof JobsIndexRoute
-  '/api/mock/$': typeof ApiMockSplatRoute
   '/definitions/$key/$version': typeof DefinitionsKeyVersionRoute
 }
 export interface FileRouteTypes {
@@ -146,7 +137,6 @@ export interface FileRouteTypes {
     | '/definitions/'
     | '/deployments/'
     | '/jobs/'
-    | '/api/mock/$'
     | '/definitions/$key/$version'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -158,7 +148,6 @@ export interface FileRouteTypes {
     | '/definitions'
     | '/deployments'
     | '/jobs'
-    | '/api/mock/$'
     | '/definitions/$key/$version'
   id:
     | '__root__'
@@ -173,7 +162,6 @@ export interface FileRouteTypes {
     | '/definitions/'
     | '/deployments/'
     | '/jobs/'
-    | '/api/mock/$'
     | '/definitions/$key/$version'
   fileRoutesById: FileRoutesById
 }
@@ -183,7 +171,6 @@ export interface RootRouteChildren {
   DeploymentsRoute: typeof DeploymentsRouteWithChildren
   JobsRoute: typeof JobsRouteWithChildren
   InstancesIdRoute: typeof InstancesIdRoute
-  ApiMockSplatRoute: typeof ApiMockSplatRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -272,13 +259,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DefinitionsKeyVersionRouteImport
       parentRoute: typeof DefinitionsKeyRoute
     }
-    '/api/mock/$': {
-      id: '/api/mock/$'
-      path: '/api/mock/$'
-      fullPath: '/api/mock/$'
-      preLoaderRoute: typeof ApiMockSplatRouteImport
-      parentRoute: typeof rootRouteImport
-    }
   }
 }
 
@@ -340,18 +320,7 @@ const rootRouteChildren: RootRouteChildren = {
   DeploymentsRoute: DeploymentsRouteWithChildren,
   JobsRoute: JobsRouteWithChildren,
   InstancesIdRoute: InstancesIdRoute,
-  ApiMockSplatRoute: ApiMockSplatRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}

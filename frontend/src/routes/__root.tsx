@@ -1,15 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  Outlet,
-  Link,
-  createRootRouteWithContext,
-  useRouter,
-  HeadContent,
-  Scripts,
-} from "@tanstack/react-router";
-import { useEffect, type ReactNode } from "react";
+import { Outlet, Link, createRootRouteWithContext, useRouter } from "@tanstack/react-router";
+import { useEffect } from "react";
 
-import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 import { hydrateStore } from "@/lib/store-bootstrap";
 
@@ -74,53 +66,18 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
 }
 
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
-  head: () => ({
-    meta: [
-      { charSet: "utf-8" },
-      { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Flowable Console" },
-      { name: "description", content: "A live, read-only debug console for Flowable BPMN process instances — see what's running, why it took that path, and why a job failed." },
-      { name: "author", content: "Flowable Console" },
-      { property: "og:title", content: "Flowable Console" },
-      { property: "og:description", content: "Live debug console for Flowable BPMN process instances." },
-      { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary_large_image" },
-    ],
-    links: [
-      {
-        rel: "stylesheet",
-        href: appCss,
-      },
-      { rel: "icon", href: "/favicon.ico", type: "image/x-icon" },
-    ],
-  }),
-  shellComponent: RootShell,
   component: RootComponent,
   notFoundComponent: NotFoundComponent,
   errorComponent: ErrorComponent,
 });
-
-function RootShell({ children }: { children: ReactNode }) {
-  return (
-    <html lang="en">
-      <head>
-        <HeadContent />
-      </head>
-      <body>
-        {children}
-        <Scripts />
-      </body>
-    </html>
-  );
-}
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
 
   useEffect(() => {
     // Refresh the in-memory cache from the (mock) HTTP endpoints once the
-    // client is mounted. SSR + first paint already have data from the
-    // synchronous seed in src/router.tsx.
+    // client is mounted. First paint already has data from the synchronous
+    // seed in src/router.tsx.
     void hydrateStore().catch((err) => console.error("hydrateStore failed", err));
   }, []);
 
