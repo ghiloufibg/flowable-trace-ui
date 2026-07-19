@@ -20,6 +20,7 @@ import { Route as JobsIdRouteImport } from './routes/jobs.$id'
 import { Route as InstancesIdRouteImport } from './routes/instances.$id'
 import { Route as DeploymentsIdRouteImport } from './routes/deployments.$id'
 import { Route as DefinitionsKeyRouteImport } from './routes/definitions.$key'
+import { Route as DefinitionsKeyIndexRouteImport } from './routes/definitions.$key.index'
 import { Route as DefinitionsKeyVersionRouteImport } from './routes/definitions.$key.$version'
 
 const JobsRoute = JobsRouteImport.update({
@@ -77,6 +78,11 @@ const DefinitionsKeyRoute = DefinitionsKeyRouteImport.update({
   path: '/$key',
   getParentRoute: () => DefinitionsRoute,
 } as any)
+const DefinitionsKeyIndexRoute = DefinitionsKeyIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => DefinitionsKeyRoute,
+} as any)
 const DefinitionsKeyVersionRoute = DefinitionsKeyVersionRouteImport.update({
   id: '/$version',
   path: '/$version',
@@ -96,10 +102,10 @@ export interface FileRoutesByFullPath {
   '/deployments/': typeof DeploymentsIndexRoute
   '/jobs/': typeof JobsIndexRoute
   '/definitions/$key/$version': typeof DefinitionsKeyVersionRoute
+  '/definitions/$key/': typeof DefinitionsKeyIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/definitions/$key': typeof DefinitionsKeyRouteWithChildren
   '/deployments/$id': typeof DeploymentsIdRoute
   '/instances/$id': typeof InstancesIdRoute
   '/jobs/$id': typeof JobsIdRoute
@@ -107,6 +113,7 @@ export interface FileRoutesByTo {
   '/deployments': typeof DeploymentsIndexRoute
   '/jobs': typeof JobsIndexRoute
   '/definitions/$key/$version': typeof DefinitionsKeyVersionRoute
+  '/definitions/$key': typeof DefinitionsKeyIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -122,6 +129,7 @@ export interface FileRoutesById {
   '/deployments/': typeof DeploymentsIndexRoute
   '/jobs/': typeof JobsIndexRoute
   '/definitions/$key/$version': typeof DefinitionsKeyVersionRoute
+  '/definitions/$key/': typeof DefinitionsKeyIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -138,10 +146,10 @@ export interface FileRouteTypes {
     | '/deployments/'
     | '/jobs/'
     | '/definitions/$key/$version'
+    | '/definitions/$key/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/definitions/$key'
     | '/deployments/$id'
     | '/instances/$id'
     | '/jobs/$id'
@@ -149,6 +157,7 @@ export interface FileRouteTypes {
     | '/deployments'
     | '/jobs'
     | '/definitions/$key/$version'
+    | '/definitions/$key'
   id:
     | '__root__'
     | '/'
@@ -163,6 +172,7 @@ export interface FileRouteTypes {
     | '/deployments/'
     | '/jobs/'
     | '/definitions/$key/$version'
+    | '/definitions/$key/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -252,6 +262,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DefinitionsKeyRouteImport
       parentRoute: typeof DefinitionsRoute
     }
+    '/definitions/$key/': {
+      id: '/definitions/$key/'
+      path: '/'
+      fullPath: '/definitions/$key/'
+      preLoaderRoute: typeof DefinitionsKeyIndexRouteImport
+      parentRoute: typeof DefinitionsKeyRoute
+    }
     '/definitions/$key/$version': {
       id: '/definitions/$key/$version'
       path: '/$version'
@@ -264,10 +281,12 @@ declare module '@tanstack/react-router' {
 
 interface DefinitionsKeyRouteChildren {
   DefinitionsKeyVersionRoute: typeof DefinitionsKeyVersionRoute
+  DefinitionsKeyIndexRoute: typeof DefinitionsKeyIndexRoute
 }
 
 const DefinitionsKeyRouteChildren: DefinitionsKeyRouteChildren = {
   DefinitionsKeyVersionRoute: DefinitionsKeyVersionRoute,
+  DefinitionsKeyIndexRoute: DefinitionsKeyIndexRoute,
 }
 
 const DefinitionsKeyRouteWithChildren = DefinitionsKeyRoute._addFileChildren(

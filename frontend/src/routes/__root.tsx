@@ -66,20 +66,39 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
 }
 
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
+  beforeLoad: async () => {
+    // Every child route's loader/render is guaranteed to run only after this
+    // resolves (TanStack Router: parent beforeLoad always completes before any
+    // descendant beforeLoad/loader/render). hydrateStore()'s own promise is
+    // memoized, so this only actually waits on the network once, on the very
+    // first navigation of the session - every later navigation resolves
+    // instantly against the already-hydrated store.
+    await hydrateStore().catch((err) => {
+      console.error("hydrateStore failed", err);
+      // Swallow rather than rethrow: a failed hydrate shouldn't block the
+      // whole app from rendering (the dashboard's own reactive hooks will
+      // just keep showing empty/seed state, same as today's behavior on
+      // fetch failure).
+    });
+  },
   component: RootComponent,
+  pendingComponent: RootPending,
   notFoundComponent: NotFoundComponent,
   errorComponent: ErrorComponent,
 });
 
+function RootPending() {
+  // Shown only while beforeLoad's hydrateStore() call is in flight - i.e.
+  // only on the very first navigation of the session, briefly.
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-background text-sm text-muted-foreground">
+      Loading…
+    </div>
+  );
+}
+
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
-
-  useEffect(() => {
-    // Refresh the in-memory cache from the (mock) HTTP endpoints once the
-    // client is mounted. First paint already has data from the synchronous
-    // seed in src/router.tsx.
-    void hydrateStore().catch((err) => console.error("hydrateStore failed", err));
-  }, []);
 
   return (
     <QueryClientProvider client={queryClient}>
