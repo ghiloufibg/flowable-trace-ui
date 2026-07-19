@@ -58,4 +58,14 @@ public class AuditRepository {
         retriesLeft,
         worker);
   }
+
+  public void recordSequenceFlowTaken(String processInstanceId, String sequenceFlowId) {
+    jdbcTemplate.update(
+        "INSERT INTO FLOWTRACE_SEQUENCE_FLOW_TAKEN "
+            + "(ID, PROCESS_INSTANCE_ID, SEQUENCE_FLOW_ID, TAKEN_AT) VALUES (?, ?, ?, ?)",
+        UUID.randomUUID().toString(),
+        processInstanceId,
+        sequenceFlowId,
+        Timestamp.from(Instant.now()));
+  }
 }

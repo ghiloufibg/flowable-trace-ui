@@ -57,12 +57,19 @@ import org.springframework.web.server.ResponseStatusException;
  * runtime state from {@link RuntimeService}/{@link HistoryService}) plus variables, tasks, trail
  * and jobs.
  *
- * <p>{@code gatewayDecision} is implemented using a reachable-successor heuristic. {@code taken} on
- * edges is also heuristic (both endpoints reached), not a true per-transition trace - Flowable does
- * not expose sequence-flow-level historic transitions on the public API in a form this phase uses.
- * Node types are limited to the frontend's supported {@code BpmnNodeType} union; unsupported BPMN
- * element types (sub-process *container* shapes themselves, intermediate events, non-timer boundary
- * events, etc.) are omitted from {@code nodes[]} rather than mislabeled.
+ * <p>{@code gatewayDecision} and edge {@code taken} are authoritative when {@code
+ * FLOWTRACE_SEQUENCE_FLOW_TAKEN} has rows for the instance - populated live by {@code
+ * FlowTraceAuditEventListener} from Flowable's {@code SEQUENCEFLOW_TAKEN} engine event, which fires
+ * per sequence-flow traversal. See {@link #loadTakenSequenceFlows(String)}. An instance whose
+ * entire lifetime happened before that listener was attached has no rows at all for it, in which
+ * case both fields fall back to the previous reachable-successor heuristic (both endpoints reached
+ * for an edge; first reached successor in BPMN document order for a gateway) rather than reporting
+ * a partially-authoritative mix. When authoritative data exists, {@code gatewayDecision} reports
+ * the *most recently* taken outgoing flow, correctly handling a gateway revisited by a loop that
+ * takes a different branch each time - the case the old heuristic could get wrong. Node types are
+ * limited to the frontend's supported {@code BpmnNodeType} union; unsupported BPMN element types
+ * (sub-process *container* shapes themselves, intermediate events, non-timer boundary events, etc.)
+ * are omitted from {@code nodes[]} rather than mislabeled.
  *
  * <p>{@code multiInstance} counts are derived from {@link HistoricActivityInstance} rows grouped by
  * activity id (one row per loop iteration) rather than execution-tree traversal - see {@link
@@ -149,6 +156,7 @@ public class InstanceEnrichmentController {
     Map<String, List<HistoricActivityInstance>> historicByActivityId =
         historicActivities.stream()
             .collect(Collectors.groupingBy(HistoricActivityInstance::getActivityId));
+    Map<String, Instant> takenSequenceFlows = loadTakenSequenceFlows(id);
 
     List<ProcessInstanceDto.BpmnNode> nodes =
         buildNodes(
@@ -159,9 +167,10 @@ public class InstanceEnrichmentController {
             reachedActivityIds,
             tasksByActivityId,
             jobErrorsByActivityId,
-            historicByActivityId);
+            historicByActivityId,
+            takenSequenceFlows);
     List<ProcessInstanceDto.BpmnEdge> edges =
-        buildEdges(allFlowElements, bpmnModel, reachedActivityIds);
+        buildEdges(allFlowElements, bpmnModel, reachedActivityIds, takenSequenceFlows);
     List<ProcessInstanceDto.Variable> variables = buildVariables(id, active);
     List<ProcessInstanceDto.TaskItem> tasks = buildTasks(id);
     List<ProcessInstanceDto.TrailEntry> trail = buildTrail(historicActivities);
@@ -286,7 +295,8 @@ public class InstanceEnrichmentController {
       Set<String> reachedActivityIds,
       Map<String, TaskInfo> tasksByActivityId,
       Map<String, ProcessInstanceDto.JobError> jobErrorsByActivityId,
-      Map<String, List<HistoricActivityInstance>> historicByActivityId) {
+      Map<String, List<HistoricActivityInstance>> historicByActivityId,
+      Map<String, Instant> takenSequenceFlows) {
     Map<String, Job> timerJobsByActivityId = new HashMap<>();
     for (Job timerJob :
         managementService.createTimerJobQuery().processInstanceId(processInstanceId).list()) {
@@ -335,7 +345,8 @@ public class InstanceEnrichmentController {
 
       String gatewayDecision =
           (element instanceof ExclusiveGateway) && reachedActivityIds.contains(element.getId())
-              ? resolveGatewayDecision(allFlowElements, element, reachedActivityIds)
+              ? resolveGatewayDecision(
+                  allFlowElements, element, reachedActivityIds, takenSequenceFlows)
               : null;
 
       ProcessInstanceDto.MultiInstanceInfo multiInstance =
@@ -393,11 +404,43 @@ public class InstanceEnrichmentController {
     return groups.isEmpty() ? null : groups;
   }
 
+  /**
+   * Most recent TAKEN_AT per sequence flow id, for this instance - empty if this instance's
+   * lifetime predates the SEQUENCEFLOW_TAKEN listener being active (see class Javadoc).
+   */
+  private Map<String, Instant> loadTakenSequenceFlows(String processInstanceId) {
+    List<Map<String, Object>> rows =
+        jdbcTemplate.queryForList(
+            "SELECT SEQUENCE_FLOW_ID, MAX(TAKEN_AT) AS TAKEN_AT FROM FLOWTRACE_SEQUENCE_FLOW_TAKEN"
+                + " WHERE PROCESS_INSTANCE_ID = ? GROUP BY SEQUENCE_FLOW_ID",
+            processInstanceId);
+    Map<String, Instant> byFlowId = new HashMap<>();
+    for (Map<String, Object> row : rows) {
+      byFlowId.put(
+          (String) row.get("SEQUENCE_FLOW_ID"),
+          ((java.sql.Timestamp) row.get("TAKEN_AT")).toInstant());
+    }
+    return byFlowId;
+  }
+
   private static String resolveGatewayDecision(
-      List<FlowElement> allFlowElements, FlowElement gateway, Set<String> reachedActivityIds) {
-    return allFlowElements.stream()
-        .filter(e -> e instanceof SequenceFlow flow && flow.getSourceRef().equals(gateway.getId()))
-        .map(e -> (SequenceFlow) e)
+      List<FlowElement> allFlowElements,
+      FlowElement gateway,
+      Set<String> reachedActivityIds,
+      Map<String, Instant> takenSequenceFlows) {
+    var outgoing =
+        allFlowElements.stream()
+            .filter(
+                e -> e instanceof SequenceFlow flow && flow.getSourceRef().equals(gateway.getId()))
+            .map(e -> (SequenceFlow) e);
+    if (!takenSequenceFlows.isEmpty()) {
+      return outgoing
+          .filter(flow -> takenSequenceFlows.containsKey(flow.getId()))
+          .max(Comparator.comparing(flow -> takenSequenceFlows.get(flow.getId())))
+          .map(flow -> flow.getName() != null ? flow.getName() : flow.getTargetRef())
+          .orElse(null);
+    }
+    return outgoing
         .filter(flow -> reachedActivityIds.contains(flow.getTargetRef()))
         .findFirst()
         .map(flow -> flow.getName() != null ? flow.getName() : flow.getTargetRef())
@@ -471,7 +514,10 @@ public class InstanceEnrichmentController {
   }
 
   private List<ProcessInstanceDto.BpmnEdge> buildEdges(
-      List<FlowElement> allFlowElements, BpmnModel bpmnModel, Set<String> reachedActivityIds) {
+      List<FlowElement> allFlowElements,
+      BpmnModel bpmnModel,
+      Set<String> reachedActivityIds,
+      Map<String, Instant> takenSequenceFlows) {
     List<ProcessInstanceDto.BpmnEdge> edges = new ArrayList<>();
     for (FlowElement element : allFlowElements) {
       if (!(element instanceof SequenceFlow flow)) {
@@ -485,8 +531,10 @@ public class InstanceEnrichmentController {
                   .map(gi -> new ProcessInstanceDto.Waypoint(gi.getX(), gi.getY()))
                   .toList();
       boolean taken =
-          reachedActivityIds.contains(flow.getSourceRef())
-              && reachedActivityIds.contains(flow.getTargetRef());
+          !takenSequenceFlows.isEmpty()
+              ? takenSequenceFlows.containsKey(flow.getId())
+              : reachedActivityIds.contains(flow.getSourceRef())
+                  && reachedActivityIds.contains(flow.getTargetRef());
       edges.add(
           new ProcessInstanceDto.BpmnEdge(
               flow.getId(),

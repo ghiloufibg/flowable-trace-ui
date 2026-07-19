@@ -6,6 +6,7 @@ import org.flowable.common.engine.api.delegate.event.FlowableEvent;
 import org.flowable.common.engine.api.delegate.event.FlowableEventListener;
 import org.flowable.common.engine.api.delegate.event.FlowableEventType;
 import org.flowable.common.engine.api.delegate.event.FlowableExceptionEvent;
+import org.flowable.engine.delegate.event.FlowableSequenceFlowTakenEvent;
 import org.flowable.job.api.Job;
 import org.flowable.variable.api.event.FlowableVariableEvent;
 
@@ -33,6 +34,8 @@ public class FlowTraceAuditEventListener implements FlowableEventListener {
     } else if (event instanceof FlowableEntityEvent entityEvent
         && entityEvent.getEntity() instanceof Job job) {
       recordJobEvent(event, job);
+    } else if (event instanceof FlowableSequenceFlowTakenEvent flowEvent) {
+      auditRepository.recordSequenceFlowTaken(flowEvent.getProcessInstanceId(), flowEvent.getId());
     }
   }
 

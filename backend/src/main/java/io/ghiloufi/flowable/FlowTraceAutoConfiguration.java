@@ -116,7 +116,8 @@ public class FlowTraceAutoConfiguration {
             FlowableEngineEventType.VARIABLE_UPDATED,
             FlowableEngineEventType.VARIABLE_DELETED,
             FlowableEngineEventType.JOB_EXECUTION_SUCCESS,
-            FlowableEngineEventType.JOB_EXECUTION_FAILURE);
+            FlowableEngineEventType.JOB_EXECUTION_FAILURE,
+            FlowableEngineEventType.SEQUENCEFLOW_TAKEN);
     return listener;
   }
 

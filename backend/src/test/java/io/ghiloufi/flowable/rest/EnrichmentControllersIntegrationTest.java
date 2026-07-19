@@ -20,6 +20,7 @@ import org.flowable.engine.repository.Deployment;
 import org.flowable.task.api.Task;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
  * Round-trip test against a real deployed BPMN process (with full BPMNDI) exercising all five
@@ -250,6 +251,65 @@ class EnrichmentControllersIntegrationTest {
       </definitions>
       """;
 
+  private static final String LOOPING_GATEWAY_XML =
+      """
+      <?xml version="1.0" encoding="UTF-8"?>
+      <definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                   xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+                   xmlns:omgdc="http://www.omg.org/spec/DD/20100524/DC"
+                   xmlns:omgdi="http://www.omg.org/spec/DD/20100524/DI"
+                   targetNamespace="io.ghiloufi.flowable.rest">
+        <process id="loopingGateway" name="Looping Gateway" isExecutable="true">
+          <startEvent id="start" name="Start"/>
+          <sequenceFlow id="f1" sourceRef="start" targetRef="loopTask"/>
+          <userTask id="loopTask" name="Loop Task"/>
+          <sequenceFlow id="f2" sourceRef="loopTask" targetRef="decision"/>
+          <exclusiveGateway id="decision" name="Done?"/>
+          <sequenceFlow id="goBack" name="loop" sourceRef="decision" targetRef="loopTask">
+            <conditionExpression xsi:type="tFormalExpression"
+                                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">${!done}</conditionExpression>
+          </sequenceFlow>
+          <sequenceFlow id="proceed" name="proceed" sourceRef="decision" targetRef="end">
+            <conditionExpression xsi:type="tFormalExpression"
+                                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">${done}</conditionExpression>
+          </sequenceFlow>
+          <endEvent id="end" name="End"/>
+        </process>
+        <bpmndi:BPMNDiagram id="diagram">
+          <bpmndi:BPMNPlane bpmnElement="loopingGateway">
+            <bpmndi:BPMNShape bpmnElement="start">
+              <omgdc:Bounds x="30" y="80" width="30" height="30"/>
+            </bpmndi:BPMNShape>
+            <bpmndi:BPMNShape bpmnElement="loopTask">
+              <omgdc:Bounds x="120" y="60" width="100" height="70"/>
+            </bpmndi:BPMNShape>
+            <bpmndi:BPMNShape bpmnElement="decision">
+              <omgdc:Bounds x="270" y="75" width="40" height="40"/>
+            </bpmndi:BPMNShape>
+            <bpmndi:BPMNShape bpmnElement="end">
+              <omgdc:Bounds x="380" y="80" width="30" height="30"/>
+            </bpmndi:BPMNShape>
+            <bpmndi:BPMNEdge bpmnElement="f1">
+              <omgdi:waypoint x="60" y="95"/>
+              <omgdi:waypoint x="120" y="95"/>
+            </bpmndi:BPMNEdge>
+            <bpmndi:BPMNEdge bpmnElement="f2">
+              <omgdi:waypoint x="220" y="95"/>
+              <omgdi:waypoint x="270" y="95"/>
+            </bpmndi:BPMNEdge>
+            <bpmndi:BPMNEdge bpmnElement="goBack">
+              <omgdi:waypoint x="290" y="75"/>
+              <omgdi:waypoint x="170" y="60"/>
+            </bpmndi:BPMNEdge>
+            <bpmndi:BPMNEdge bpmnElement="proceed">
+              <omgdi:waypoint x="310" y="95"/>
+              <omgdi:waypoint x="380" y="95"/>
+            </bpmndi:BPMNEdge>
+          </bpmndi:BPMNPlane>
+        </bpmndi:BPMNDiagram>
+      </definitions>
+      """;
+
   private ProcessEngine processEngine;
   private DeploymentEnrichmentController deploymentController;
   private DefinitionEnrichmentController definitionController;
@@ -276,7 +336,8 @@ class EnrichmentControllersIntegrationTest {
             FlowableEngineEventType.VARIABLE_UPDATED,
             FlowableEngineEventType.VARIABLE_DELETED,
             FlowableEngineEventType.JOB_EXECUTION_SUCCESS,
-            FlowableEngineEventType.JOB_EXECUTION_FAILURE);
+            FlowableEngineEventType.JOB_EXECUTION_FAILURE,
+            FlowableEngineEventType.SEQUENCEFLOW_TAKEN);
 
     deploymentController = new DeploymentEnrichmentController(processEngine.getRepositoryService());
     definitionController = new DefinitionEnrichmentController(processEngine.getRepositoryService());
@@ -577,6 +638,99 @@ class EnrichmentControllersIntegrationTest {
     var callNodeAfter = findNode(ended, "callChild");
     // childInstanceId stays populated after completion - not cleared once the call finishes.
     assertThat(callNodeAfter.childInstanceId()).isEqualTo(childInstance.getId());
+  }
+
+  @Test
+  void instanceEnrichmentReportsTheMostRecentGatewayDecisionForALoopThatChangesBranch() {
+    processEngine
+        .getRepositoryService()
+        .createDeployment()
+        .name("Looping Gateway Deployment")
+        .addString("loopingGateway.bpmn20.xml", LOOPING_GATEWAY_XML)
+        .deploy();
+
+    Map<String, Object> variables = new HashMap<>();
+    variables.put("done", false);
+    String instanceId =
+        processEngine
+            .getRuntimeService()
+            .startProcessInstanceByKey("loopingGateway", variables)
+            .getId();
+
+    // -- pass 1: not done yet, gateway loops back to loopTask -------------------------------
+    Task firstPass =
+        processEngine
+            .getTaskService()
+            .createTaskQuery()
+            .processInstanceId(instanceId)
+            .singleResult();
+    processEngine.getTaskService().complete(firstPass.getId());
+
+    // -- pass 2: now done, gateway proceeds to end -------------------------------------------
+    processEngine.getRuntimeService().setVariable(instanceId, "done", true);
+    Task secondPass =
+        processEngine
+            .getTaskService()
+            .createTaskQuery()
+            .processInstanceId(instanceId)
+            .singleResult();
+    processEngine.getTaskService().complete(secondPass.getId());
+
+    ProcessInstanceDto ended = instanceController.getInstance(instanceId);
+    assertThat(ended.status()).isEqualTo("ended");
+
+    // Both "loopTask" and "end" were eventually reached, so the old reachable-successor
+    // heuristic would report "loop" (first in BPMN document order) here - wrong, since the
+    // gateway's actual final decision was "proceed". Authoritative data (ordered by TAKEN_AT)
+    // must report the latest decision instead.
+    var decisionNode = findNode(ended, "decision");
+    assertThat(decisionNode.gatewayDecision()).isEqualTo("proceed");
+
+    var goBackEdge = findEdge(ended, "goBack");
+    assertThat(goBackEdge.taken()).isTrue();
+    var proceedEdge = findEdge(ended, "proceed");
+    assertThat(proceedEdge.taken()).isTrue();
+  }
+
+  @Test
+  void instanceEnrichmentFallsBackToTheHeuristicWhenNoSequenceFlowAuditDataExists() {
+    processEngine
+        .getRepositoryService()
+        .createDeployment()
+        .name("Order Approval Deployment")
+        .addString("orderApproval.bpmn20.xml", PROCESS_XML)
+        .deploy();
+
+    Map<String, Object> variables = new HashMap<>();
+    variables.put("approved", true);
+    String instanceId =
+        processEngine
+            .getRuntimeService()
+            .startProcessInstanceByKey("orderApproval", "ORD-200", variables)
+            .getId();
+
+    Task task =
+        processEngine
+            .getTaskService()
+            .createTaskQuery()
+            .processInstanceId(instanceId)
+            .singleResult();
+    processEngine.getTaskService().complete(task.getId());
+
+    // Simulate an instance whose lifetime predates the SEQUENCEFLOW_TAKEN listener being
+    // attached: no audit rows for it at all, even though the instance is otherwise complete.
+    new JdbcTemplate(processEngine.getProcessEngineConfiguration().getDataSource())
+        .update(
+            "DELETE FROM FLOWTRACE_SEQUENCE_FLOW_TAKEN WHERE PROCESS_INSTANCE_ID = ?", instanceId);
+
+    ProcessInstanceDto ended = instanceController.getInstance(instanceId);
+    var decisionNode = findNode(ended, "decision");
+    assertThat(decisionNode.gatewayDecision()).isEqualTo("yes");
+
+    var edgeF3 = findEdge(ended, "f3");
+    assertThat(edgeF3.taken()).isTrue();
+    var edgeF4 = findEdge(ended, "f4");
+    assertThat(edgeF4.taken()).isFalse();
   }
 
   @Test
