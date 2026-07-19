@@ -3,12 +3,14 @@ package io.ghiloufi.flowable.rest;
 import io.ghiloufi.flowable.rest.dto.ProcessInstanceDto;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
+import org.flowable.bpmn.model.Activity;
 import org.flowable.bpmn.model.BoundaryEvent;
 import org.flowable.bpmn.model.BpmnModel;
 import org.flowable.bpmn.model.CallActivity;
@@ -55,16 +57,28 @@ import org.springframework.web.server.ResponseStatusException;
  * runtime state from {@link RuntimeService}/{@link HistoryService}) plus variables, tasks, trail
  * and jobs.
  *
- * <p>Scoped out of v1, returned as {@code null} rather than guessed: {@code multiInstance} counts
- * (would need per-execution-tree traversal beyond this phase's scope) and {@code childInstanceId}
- * for call activities (would need correlating a call activity's execution to its spawned
- * sub-process instance, which HistoricProcessInstance doesn't directly expose). {@code
- * gatewayDecision} IS implemented, using a reachable-successor heuristic. {@code taken} on edges is
- * also heuristic (both endpoints reached), not a true per-transition trace - Flowable does not
- * expose sequence-flow-level historic transitions on the public API in a form this phase uses. Node
- * types are limited to the frontend's supported {@code BpmnNodeType} union; unsupported BPMN
+ * <p>{@code gatewayDecision} is implemented using a reachable-successor heuristic. {@code taken} on
+ * edges is also heuristic (both endpoints reached), not a true per-transition trace - Flowable does
+ * not expose sequence-flow-level historic transitions on the public API in a form this phase uses.
+ * Node types are limited to the frontend's supported {@code BpmnNodeType} union; unsupported BPMN
  * element types (sub-process *container* shapes themselves, intermediate events, non-timer boundary
  * events, etc.) are omitted from {@code nodes[]} rather than mislabeled.
+ *
+ * <p>{@code multiInstance} counts are derived from {@link HistoricActivityInstance} rows grouped by
+ * activity id (one row per loop iteration) rather than execution-tree traversal - see {@link
+ * #computeMultiInstanceInfo(List)}. For parallel multi-instance this is exact (all iterations' rows
+ * exist as soon as the activity starts); for *sequential* multi-instance, {@code total}
+ * under-counts the true loop cardinality until the last iteration has started, since rows are
+ * created one at a time. Same standard as {@code gatewayDecision}: documented heuristic, not a
+ * silent guess.
+ *
+ * <p>{@code callActivity.childInstanceId} comes directly from {@link
+ * HistoricActivityInstance#getCalledProcessInstanceId()} - see {@link
+ * #resolveCallActivityChildInstanceId(List)}. Populated as soon as the child process instance
+ * starts, not only after the call activity completes. A call activity that is itself multi-instance
+ * (rare, technically allowed by BPMN) can spawn more than one child instance; since the DTO field
+ * is a single string, one is reported (the currently-running one if any, else the most recently
+ * started) rather than the full set.
  *
  * <p>Flow elements nested inside a sub-process (including an embedded, {@code triggeredByEvent}
  * event sub-process) ARE walked and included when their own type is otherwise supported - {@link
@@ -132,6 +146,9 @@ public class InstanceEnrichmentController {
     Map<String, TaskInfo> tasksByActivityId = loadTasksByActivityId(id);
     Map<String, ProcessInstanceDto.JobError> jobErrorsByActivityId =
         loadJobErrorsByActivityId(id, bpmnModel);
+    Map<String, List<HistoricActivityInstance>> historicByActivityId =
+        historicActivities.stream()
+            .collect(Collectors.groupingBy(HistoricActivityInstance::getActivityId));
 
     List<ProcessInstanceDto.BpmnNode> nodes =
         buildNodes(
@@ -141,7 +158,8 @@ public class InstanceEnrichmentController {
             activeActivityIds,
             reachedActivityIds,
             tasksByActivityId,
-            jobErrorsByActivityId);
+            jobErrorsByActivityId,
+            historicByActivityId);
     List<ProcessInstanceDto.BpmnEdge> edges =
         buildEdges(allFlowElements, bpmnModel, reachedActivityIds);
     List<ProcessInstanceDto.Variable> variables = buildVariables(id, active);
@@ -267,7 +285,8 @@ public class InstanceEnrichmentController {
       Set<String> activeActivityIds,
       Set<String> reachedActivityIds,
       Map<String, TaskInfo> tasksByActivityId,
-      Map<String, ProcessInstanceDto.JobError> jobErrorsByActivityId) {
+      Map<String, ProcessInstanceDto.JobError> jobErrorsByActivityId,
+      Map<String, List<HistoricActivityInstance>> historicByActivityId) {
     Map<String, Job> timerJobsByActivityId = new HashMap<>();
     for (Job timerJob :
         managementService.createTimerJobQuery().processInstanceId(processInstanceId).list()) {
@@ -319,6 +338,18 @@ public class InstanceEnrichmentController {
               ? resolveGatewayDecision(allFlowElements, element, reachedActivityIds)
               : null;
 
+      ProcessInstanceDto.MultiInstanceInfo multiInstance =
+          (element instanceof Activity activity && activity.getLoopCharacteristics() != null)
+              ? computeMultiInstanceInfo(
+                  historicByActivityId.getOrDefault(element.getId(), List.of()))
+              : null;
+
+      String childInstanceId =
+          (element instanceof CallActivity)
+              ? resolveCallActivityChildInstanceId(
+                  historicByActivityId.getOrDefault(element.getId(), List.of()))
+              : null;
+
       nodes.add(
           new ProcessInstanceDto.BpmnNode(
               element.getId(),
@@ -333,11 +364,11 @@ public class InstanceEnrichmentController {
               candidateGroups,
               dueDate,
               priority,
-              null,
+              multiInstance,
               gatewayDecision,
               jobError,
               timerDueAt,
-              null,
+              childInstanceId,
               attachedTo));
     }
     return nodes;
@@ -370,6 +401,36 @@ public class InstanceEnrichmentController {
         .filter(flow -> reachedActivityIds.contains(flow.getTargetRef()))
         .findFirst()
         .map(flow -> flow.getName() != null ? flow.getName() : flow.getTargetRef())
+        .orElse(null);
+  }
+
+  /**
+   * One {@link HistoricActivityInstance} row exists per loop iteration of a multi-instance
+   * activity, all sharing the element's activity id. See the class Javadoc for the
+   * parallel-exact/sequential-undercounts caveat.
+   */
+  private static ProcessInstanceDto.MultiInstanceInfo computeMultiInstanceInfo(
+      List<HistoricActivityInstance> instances) {
+    if (instances.isEmpty()) {
+      return null;
+    }
+    int total = instances.size();
+    int completed = (int) instances.stream().filter(hai -> hai.getEndTime() != null).count();
+    return new ProcessInstanceDto.MultiInstanceInfo(total, total - completed, completed);
+  }
+
+  /**
+   * Prefers the currently-running call (endTime == null) if one exists, since that's the case the
+   * "jump to child instance" UI action cares about most; otherwise falls back to the most recently
+   * started call. A call activity re-executed via a loop/multi-instance combination has multiple
+   * rows here - this reports one, not a list, matching the DTO's single-value field.
+   */
+  private static String resolveCallActivityChildInstanceId(List<HistoricActivityInstance> calls) {
+    return calls.stream()
+        .filter(hai -> hai.getEndTime() == null)
+        .findFirst()
+        .or(() -> calls.stream().max(Comparator.comparing(HistoricActivityInstance::getStartTime)))
+        .map(HistoricActivityInstance::getCalledProcessInstanceId)
         .orElse(null);
   }
 

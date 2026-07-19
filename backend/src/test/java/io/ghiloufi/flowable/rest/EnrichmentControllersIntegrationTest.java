@@ -153,6 +153,103 @@ class EnrichmentControllersIntegrationTest {
       </definitions>
       """;
 
+  private static final String MULTI_INSTANCE_XML =
+      """
+      <?xml version="1.0" encoding="UTF-8"?>
+      <definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                   xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+                   xmlns:omgdc="http://www.omg.org/spec/DD/20100524/DC"
+                   xmlns:omgdi="http://www.omg.org/spec/DD/20100524/DI"
+                   targetNamespace="io.ghiloufi.flowable.rest">
+        <process id="multiInstanceReview" name="Multi-Instance Review" isExecutable="true">
+          <startEvent id="start" name="Start"/>
+          <sequenceFlow id="f1" sourceRef="start" targetRef="review"/>
+          <userTask id="review" name="Review Document">
+            <multiInstanceLoopCharacteristics isSequential="false">
+              <loopCardinality>3</loopCardinality>
+            </multiInstanceLoopCharacteristics>
+          </userTask>
+          <sequenceFlow id="f2" sourceRef="review" targetRef="end"/>
+          <endEvent id="end" name="End"/>
+        </process>
+        <bpmndi:BPMNDiagram id="diagram">
+          <bpmndi:BPMNPlane bpmnElement="multiInstanceReview">
+            <bpmndi:BPMNShape bpmnElement="start">
+              <omgdc:Bounds x="30" y="80" width="30" height="30"/>
+            </bpmndi:BPMNShape>
+            <bpmndi:BPMNShape bpmnElement="review">
+              <omgdc:Bounds x="120" y="60" width="100" height="70"/>
+            </bpmndi:BPMNShape>
+            <bpmndi:BPMNShape bpmnElement="end">
+              <omgdc:Bounds x="270" y="80" width="30" height="30"/>
+            </bpmndi:BPMNShape>
+            <bpmndi:BPMNEdge bpmnElement="f1">
+              <omgdi:waypoint x="60" y="95"/>
+              <omgdi:waypoint x="120" y="95"/>
+            </bpmndi:BPMNEdge>
+            <bpmndi:BPMNEdge bpmnElement="f2">
+              <omgdi:waypoint x="220" y="95"/>
+              <omgdi:waypoint x="270" y="95"/>
+            </bpmndi:BPMNEdge>
+          </bpmndi:BPMNPlane>
+        </bpmndi:BPMNDiagram>
+      </definitions>
+      """;
+
+  private static final String CALL_ACTIVITY_PARENT_XML =
+      """
+      <?xml version="1.0" encoding="UTF-8"?>
+      <definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                   xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+                   xmlns:omgdc="http://www.omg.org/spec/DD/20100524/DC"
+                   xmlns:omgdi="http://www.omg.org/spec/DD/20100524/DI"
+                   targetNamespace="io.ghiloufi.flowable.rest">
+        <process id="parentWithCallActivity" name="Parent With Call Activity" isExecutable="true">
+          <startEvent id="start" name="Start"/>
+          <sequenceFlow id="f1" sourceRef="start" targetRef="callChild"/>
+          <callActivity id="callChild" name="Call Child Process" calledElement="childProcess"/>
+          <sequenceFlow id="f2" sourceRef="callChild" targetRef="end"/>
+          <endEvent id="end" name="End"/>
+        </process>
+        <bpmndi:BPMNDiagram id="diagram">
+          <bpmndi:BPMNPlane bpmnElement="parentWithCallActivity">
+            <bpmndi:BPMNShape bpmnElement="start">
+              <omgdc:Bounds x="30" y="80" width="30" height="30"/>
+            </bpmndi:BPMNShape>
+            <bpmndi:BPMNShape bpmnElement="callChild">
+              <omgdc:Bounds x="120" y="60" width="100" height="70"/>
+            </bpmndi:BPMNShape>
+            <bpmndi:BPMNShape bpmnElement="end">
+              <omgdc:Bounds x="270" y="80" width="30" height="30"/>
+            </bpmndi:BPMNShape>
+            <bpmndi:BPMNEdge bpmnElement="f1">
+              <omgdi:waypoint x="60" y="95"/>
+              <omgdi:waypoint x="120" y="95"/>
+            </bpmndi:BPMNEdge>
+            <bpmndi:BPMNEdge bpmnElement="f2">
+              <omgdi:waypoint x="220" y="95"/>
+              <omgdi:waypoint x="270" y="95"/>
+            </bpmndi:BPMNEdge>
+          </bpmndi:BPMNPlane>
+        </bpmndi:BPMNDiagram>
+      </definitions>
+      """;
+
+  private static final String CALL_ACTIVITY_CHILD_XML =
+      """
+      <?xml version="1.0" encoding="UTF-8"?>
+      <definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                   targetNamespace="io.ghiloufi.flowable.rest">
+        <process id="childProcess" name="Child Process" isExecutable="true">
+          <startEvent id="childStart" name="Child Start"/>
+          <sequenceFlow id="cf1" sourceRef="childStart" targetRef="childTask"/>
+          <userTask id="childTask" name="Child Task"/>
+          <sequenceFlow id="cf2" sourceRef="childTask" targetRef="childEnd"/>
+          <endEvent id="childEnd" name="Child End"/>
+        </process>
+      </definitions>
+      """;
+
   private ProcessEngine processEngine;
   private DeploymentEnrichmentController deploymentController;
   private DefinitionEnrichmentController definitionController;
@@ -382,6 +479,104 @@ class EnrichmentControllersIntegrationTest {
 
     assertThat(ended.trail().stream().map(ProcessInstanceDto.TrailEntry::activityId))
         .contains("innerStart", "innerTask", "innerEnd");
+  }
+
+  @Test
+  void instanceEnrichmentReportsMultiInstanceProgressForAParallelMultiInstanceUserTask() {
+    processEngine
+        .getRepositoryService()
+        .createDeployment()
+        .name("Multi-Instance Review Deployment")
+        .addString("multiInstanceReview.bpmn20.xml", MULTI_INSTANCE_XML)
+        .deploy();
+
+    String instanceId =
+        processEngine.getRuntimeService().startProcessInstanceByKey("multiInstanceReview").getId();
+
+    // -- stage 1: all 3 parallel instances started, none completed yet ----------------------
+    ProcessInstanceDto atStart = instanceController.getInstance(instanceId);
+    var reviewNodeAtStart = findNode(atStart, "review");
+    assertThat(reviewNodeAtStart.multiInstance()).isNotNull();
+    assertThat(reviewNodeAtStart.multiInstance().total()).isEqualTo(3);
+    assertThat(reviewNodeAtStart.multiInstance().active()).isEqualTo(3);
+    assertThat(reviewNodeAtStart.multiInstance().completed()).isZero();
+
+    // non-multi-instance nodes are unaffected - still null, not a zeroed-out struct.
+    var startNode = findNode(atStart, "start");
+    assertThat(startNode.multiInstance()).isNull();
+
+    // -- stage 2: complete 2 of 3 ------------------------------------------------------------
+    var tasks =
+        processEngine.getTaskService().createTaskQuery().processInstanceId(instanceId).list();
+    assertThat(tasks).hasSize(3);
+    processEngine.getTaskService().complete(tasks.get(0).getId());
+    processEngine.getTaskService().complete(tasks.get(1).getId());
+
+    ProcessInstanceDto partiallyDone = instanceController.getInstance(instanceId);
+    var reviewNodePartial = findNode(partiallyDone, "review");
+    assertThat(reviewNodePartial.multiInstance().total()).isEqualTo(3);
+    assertThat(reviewNodePartial.multiInstance().active()).isEqualTo(1);
+    assertThat(reviewNodePartial.multiInstance().completed()).isEqualTo(2);
+
+    // -- stage 3: complete the last one, instance ends ---------------------------------------
+    processEngine.getTaskService().complete(tasks.get(2).getId());
+
+    ProcessInstanceDto ended = instanceController.getInstance(instanceId);
+    assertThat(ended.status()).isEqualTo("ended");
+    var reviewNodeEnded = findNode(ended, "review");
+    assertThat(reviewNodeEnded.multiInstance().total()).isEqualTo(3);
+    assertThat(reviewNodeEnded.multiInstance().active()).isZero();
+    assertThat(reviewNodeEnded.multiInstance().completed()).isEqualTo(3);
+  }
+
+  @Test
+  void instanceEnrichmentResolvesCallActivityChildInstanceId() {
+    processEngine
+        .getRepositoryService()
+        .createDeployment()
+        .name("Call Activity Deployment")
+        .addString("parentWithCallActivity.bpmn20.xml", CALL_ACTIVITY_PARENT_XML)
+        .addString("childProcess.bpmn20.xml", CALL_ACTIVITY_CHILD_XML)
+        .deploy();
+
+    String parentInstanceId =
+        processEngine
+            .getRuntimeService()
+            .startProcessInstanceByKey("parentWithCallActivity")
+            .getId();
+
+    var childInstance =
+        processEngine
+            .getRuntimeService()
+            .createProcessInstanceQuery()
+            .processDefinitionKey("childProcess")
+            .singleResult();
+
+    // -- stage 1: call activity active, child process still running ------------------------
+    ProcessInstanceDto atCallActivity = instanceController.getInstance(parentInstanceId);
+    var callNode = findNode(atCallActivity, "callChild");
+    assertThat(callNode.type()).isEqualTo("callActivity");
+    assertThat(callNode.state()).isEqualTo("active");
+    assertThat(callNode.childInstanceId()).isEqualTo(childInstance.getId());
+
+    // non-call-activity nodes are unaffected.
+    var startNode = findNode(atCallActivity, "start");
+    assertThat(startNode.childInstanceId()).isNull();
+
+    // -- stage 2: complete the child task, child ends, call activity completes --------------
+    Task childTask =
+        processEngine
+            .getTaskService()
+            .createTaskQuery()
+            .processInstanceId(childInstance.getId())
+            .singleResult();
+    processEngine.getTaskService().complete(childTask.getId());
+
+    ProcessInstanceDto ended = instanceController.getInstance(parentInstanceId);
+    assertThat(ended.status()).isEqualTo("ended");
+    var callNodeAfter = findNode(ended, "callChild");
+    // childInstanceId stays populated after completion - not cleared once the call finishes.
+    assertThat(callNodeAfter.childInstanceId()).isEqualTo(childInstance.getId());
   }
 
   @Test

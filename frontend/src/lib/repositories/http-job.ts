@@ -2,13 +2,10 @@
  * HTTP-backed JobRepository — Flowable REST for the list, custom endpoint
  * for aggregated KPIs (`jobHealth`).
  *
- * Known gap: `management/jobs` only returns executable/async jobs per real
- * Flowable REST semantics (ManagementService.createJobQuery()) - timer jobs
- * (management/timer-jobs) and dead-letter jobs (management/deadletter-jobs)
- * live under separate endpoints and aren't merged in here yet, so
- * listJobs()/jobsForInstance() will under-represent them against the real
- * backend. jobHealth() is unaffected - the backend's /custom/jobs/health
- * aggregates across all three job tables correctly.
+ * The list is assembled from all three of Flowable's job query endpoints
+ * (async/executable, timer, dead-letter) since each lives under a separate
+ * REST resource. The per-id enrichment call (`custom/jobs/{id}`) already
+ * type-detects across all three tables, so it's reused unchanged here.
  */
 
 import type { JobRepository } from "@/lib/store";
@@ -83,14 +80,24 @@ export class HttpJobRepository implements JobRepository {
   }
 
   async hydrate(): Promise<void> {
-    const list = await flowableClient.get<FlowableList<FlowableJobDTO>>("management/jobs");
+    const [asyncJobs, timerJobs, deadLetterJobs] = await Promise.all([
+      flowableClient.get<FlowableList<FlowableJobDTO>>("management/jobs"),
+      flowableClient.get<FlowableList<FlowableJobDTO>>("management/timer-jobs"),
+      flowableClient.get<FlowableList<FlowableJobDTO>>("management/deadletter-jobs"),
+    ]);
+    const ids = [
+      ...asyncJobs.data.map((d) => d.id),
+      ...timerJobs.data.map((d) => d.id),
+      ...deadLetterJobs.data.map((d) => d.id),
+    ];
+
     const nextOrder: string[] = [];
     const nextMap = new Map<string, EngineJob>();
     await Promise.all(
-      list.data.map(async (dto) => {
-        nextOrder.push(dto.id);
-        const domain = await customClient.get<EngineJob>(`jobs/${dto.id}`);
-        nextMap.set(dto.id, domain);
+      ids.map(async (id) => {
+        nextOrder.push(id);
+        const domain = await customClient.get<EngineJob>(`jobs/${id}`);
+        nextMap.set(id, domain);
       }),
     );
     this.byId = nextMap;
