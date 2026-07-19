@@ -1,5 +1,7 @@
 package io.ghiloufi.flowable;
 
+import io.ghiloufi.flowable.audit.FlowTraceSchemaInitializer;
+import javax.sql.DataSource;
 import org.flowable.engine.ProcessEngine;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -42,6 +44,19 @@ public class FlowTraceAutoConfiguration {
     return new FlowTraceActivationMarker(processEngine.getName());
   }
 
+  /**
+   * Migrates the FLOWTRACE_* audit tables into whatever DataSource the existing ProcessEngine
+   * already uses - reusing it directly (rather than adding new flowtrace.datasource.* properties)
+   * guarantees the audit tables always land in the same physical database Flowable itself uses. See
+   * decision in claudedocs/backend-library-design.md §5.
+   */
+  @Bean
+  public FlowTraceSchemaMigration flowTraceSchemaMigration() {
+    DataSource dataSource = processEngine.getProcessEngineConfiguration().getDataSource();
+    FlowTraceSchemaInitializer.migrate(dataSource);
+    return new FlowTraceSchemaMigration(dataSource);
+  }
+
   @EventListener(ContextRefreshedEvent.class)
   public void logActivation() {
     log.info(
@@ -52,4 +67,7 @@ public class FlowTraceAutoConfiguration {
 
   /** Marker bean proving the auto-configuration activated, used by tests. */
   public record FlowTraceActivationMarker(String processEngineName) {}
+
+  /** Marker bean proving the audit schema migration ran, used by tests. */
+  public record FlowTraceSchemaMigration(DataSource dataSource) {}
 }
