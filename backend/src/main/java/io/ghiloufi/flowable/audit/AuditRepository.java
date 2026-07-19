@@ -43,17 +43,19 @@ public class AuditRepository {
       String processInstanceId,
       String outcome,
       String exceptionMessage,
-      int retriesLeft) {
+      int retriesLeft,
+      String worker) {
     jdbcTemplate.update(
         "INSERT INTO FLOWTRACE_JOB_ATTEMPT "
             + "(ID, JOB_ID, PROCESS_INSTANCE_ID, ATTEMPT_AT, OUTCOME, EXCEPTION_MESSAGE,"
-            + " RETRIES_LEFT) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            + " RETRIES_LEFT, WORKER) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         UUID.randomUUID().toString(),
         jobId,
         processInstanceId,
         Timestamp.from(Instant.now()),
         outcome,
         exceptionMessage,
-        retriesLeft);
+        retriesLeft,
+        worker);
   }
 }

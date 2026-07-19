@@ -89,7 +89,12 @@ public class FlowTraceAuditEventListener implements FlowableEventListener {
         event instanceof FlowableExceptionEvent exceptionEvent ? exceptionEvent.getCause() : null;
     String exceptionMessage = cause != null ? cause.getMessage() : job.getExceptionMessage();
     auditRepository.recordJobAttempt(
-        job.getId(), job.getProcessInstanceId(), outcome, exceptionMessage, job.getRetries());
+        job.getId(),
+        job.getProcessInstanceId(),
+        outcome,
+        exceptionMessage,
+        job.getRetries(),
+        Thread.currentThread().getName());
   }
 
   private static String outcomeFor(FlowableEventType type) {

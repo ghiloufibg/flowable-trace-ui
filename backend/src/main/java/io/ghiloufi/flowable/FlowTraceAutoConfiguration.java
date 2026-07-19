@@ -3,9 +3,19 @@ package io.ghiloufi.flowable;
 import io.ghiloufi.flowable.audit.AuditRepository;
 import io.ghiloufi.flowable.audit.FlowTraceAuditEventListener;
 import io.ghiloufi.flowable.audit.FlowTraceSchemaInitializer;
+import io.ghiloufi.flowable.rest.DefinitionEnrichmentController;
+import io.ghiloufi.flowable.rest.DeploymentEnrichmentController;
+import io.ghiloufi.flowable.rest.InstanceEnrichmentController;
+import io.ghiloufi.flowable.rest.JobEnrichmentController;
+import io.ghiloufi.flowable.rest.JobHealthController;
 import javax.sql.DataSource;
 import org.flowable.common.engine.api.delegate.event.FlowableEngineEventType;
+import org.flowable.engine.HistoryService;
+import org.flowable.engine.ManagementService;
 import org.flowable.engine.ProcessEngine;
+import org.flowable.engine.RepositoryService;
+import org.flowable.engine.RuntimeService;
+import org.flowable.engine.TaskService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
@@ -83,6 +93,55 @@ public class FlowTraceAutoConfiguration {
             FlowableEngineEventType.JOB_EXECUTION_SUCCESS,
             FlowableEngineEventType.JOB_EXECUTION_FAILURE);
     return listener;
+  }
+
+  /**
+   * The custom/** enrichment controllers (see claudedocs/backend-library-design.md §7.2). These
+   * plain @RestController classes aren't picked up by component scanning (this is a library, not
+   * the consumer's own base package), so each is registered explicitly here rather than relying
+   * on @ComponentScan.
+   */
+  @Bean
+  public DeploymentEnrichmentController flowTraceDeploymentEnrichmentController(
+      RepositoryService repositoryService) {
+    return new DeploymentEnrichmentController(repositoryService);
+  }
+
+  @Bean
+  public DefinitionEnrichmentController flowTraceDefinitionEnrichmentController(
+      RepositoryService repositoryService) {
+    return new DefinitionEnrichmentController(repositoryService);
+  }
+
+  @Bean
+  public JobHealthController flowTraceJobHealthController(ManagementService managementService) {
+    return new JobHealthController(managementService);
+  }
+
+  @Bean
+  public JobEnrichmentController flowTraceJobEnrichmentController(
+      ManagementService managementService,
+      RepositoryService repositoryService,
+      RuntimeService runtimeService,
+      HistoryService historyService) {
+    return new JobEnrichmentController(
+        managementService, repositoryService, runtimeService, historyService, processEngine);
+  }
+
+  @Bean
+  public InstanceEnrichmentController flowTraceInstanceEnrichmentController(
+      RepositoryService repositoryService,
+      RuntimeService runtimeService,
+      TaskService taskService,
+      HistoryService historyService,
+      ManagementService managementService) {
+    return new InstanceEnrichmentController(
+        repositoryService,
+        runtimeService,
+        taskService,
+        historyService,
+        managementService,
+        processEngine);
   }
 
   @EventListener(ContextRefreshedEvent.class)

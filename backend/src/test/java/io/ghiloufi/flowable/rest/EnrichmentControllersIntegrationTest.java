@@ -1,0 +1,290 @@
+package io.ghiloufi.flowable.rest;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import io.ghiloufi.flowable.audit.AuditRepository;
+import io.ghiloufi.flowable.audit.FlowTraceAuditEventListener;
+import io.ghiloufi.flowable.audit.FlowTraceSchemaInitializer;
+import io.ghiloufi.flowable.rest.dto.DeploymentDto;
+import io.ghiloufi.flowable.rest.dto.JobHealthDto;
+import io.ghiloufi.flowable.rest.dto.ProcessDefinitionDto;
+import io.ghiloufi.flowable.rest.dto.ProcessInstanceDto;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
+import javax.sql.DataSource;
+import org.flowable.common.engine.api.delegate.event.FlowableEngineEventType;
+import org.flowable.engine.ProcessEngine;
+import org.flowable.engine.ProcessEngineConfiguration;
+import org.flowable.engine.repository.Deployment;
+import org.flowable.task.api.Task;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+/**
+ * Round-trip test against a real deployed BPMN process (with full BPMNDI) exercising all five
+ * custom/** enrichment controllers together, per Phase 5's task description in
+ * claudedocs/implementation-plan.md.
+ */
+class EnrichmentControllersIntegrationTest {
+
+  private static final String PROCESS_XML =
+      """
+      <?xml version="1.0" encoding="UTF-8"?>
+      <definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                   xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+                   xmlns:omgdc="http://www.omg.org/spec/DD/20100524/DC"
+                   xmlns:omgdi="http://www.omg.org/spec/DD/20100524/DI"
+                   targetNamespace="io.ghiloufi.flowable.rest">
+        <process id="orderApproval" name="Order Approval" isExecutable="true">
+          <startEvent id="start" name="Start"/>
+          <sequenceFlow id="f1" sourceRef="start" targetRef="review"/>
+          <userTask id="review" name="Review Order"/>
+          <sequenceFlow id="f2" sourceRef="review" targetRef="decision"/>
+          <exclusiveGateway id="decision" name="Approved?"/>
+          <sequenceFlow id="f3" name="yes" sourceRef="decision" targetRef="end">
+            <conditionExpression xsi:type="tFormalExpression"
+                                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">${approved}</conditionExpression>
+          </sequenceFlow>
+          <sequenceFlow id="f4" name="no" sourceRef="decision" targetRef="rejected">
+            <conditionExpression xsi:type="tFormalExpression"
+                                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">${!approved}</conditionExpression>
+          </sequenceFlow>
+          <endEvent id="end" name="End"/>
+          <endEvent id="rejected" name="Rejected"/>
+        </process>
+        <bpmndi:BPMNDiagram id="diagram">
+          <bpmndi:BPMNPlane bpmnElement="orderApproval">
+            <bpmndi:BPMNShape bpmnElement="start">
+              <omgdc:Bounds x="30" y="80" width="30" height="30"/>
+            </bpmndi:BPMNShape>
+            <bpmndi:BPMNShape bpmnElement="review">
+              <omgdc:Bounds x="120" y="60" width="100" height="70"/>
+            </bpmndi:BPMNShape>
+            <bpmndi:BPMNShape bpmnElement="decision">
+              <omgdc:Bounds x="270" y="75" width="40" height="40"/>
+            </bpmndi:BPMNShape>
+            <bpmndi:BPMNShape bpmnElement="end">
+              <omgdc:Bounds x="360" y="80" width="30" height="30"/>
+            </bpmndi:BPMNShape>
+            <bpmndi:BPMNShape bpmnElement="rejected">
+              <omgdc:Bounds x="360" y="160" width="30" height="30"/>
+            </bpmndi:BPMNShape>
+            <bpmndi:BPMNEdge bpmnElement="f1">
+              <omgdi:waypoint x="60" y="95"/>
+              <omgdi:waypoint x="120" y="95"/>
+            </bpmndi:BPMNEdge>
+            <bpmndi:BPMNEdge bpmnElement="f2">
+              <omgdi:waypoint x="220" y="95"/>
+              <omgdi:waypoint x="270" y="95"/>
+            </bpmndi:BPMNEdge>
+            <bpmndi:BPMNEdge bpmnElement="f3">
+              <omgdi:waypoint x="310" y="95"/>
+              <omgdi:waypoint x="360" y="95"/>
+            </bpmndi:BPMNEdge>
+            <bpmndi:BPMNEdge bpmnElement="f4">
+              <omgdi:waypoint x="290" y="115"/>
+              <omgdi:waypoint x="375" y="160"/>
+            </bpmndi:BPMNEdge>
+          </bpmndi:BPMNPlane>
+        </bpmndi:BPMNDiagram>
+      </definitions>
+      """;
+
+  private ProcessEngine processEngine;
+  private DeploymentEnrichmentController deploymentController;
+  private DefinitionEnrichmentController definitionController;
+  private InstanceEnrichmentController instanceController;
+  private JobHealthController jobHealthController;
+
+  @BeforeEach
+  void setUp() {
+    processEngine =
+        ProcessEngineConfiguration.createStandaloneInMemProcessEngineConfiguration()
+            .setJdbcUrl("jdbc:h2:mem:flowtrace-rest-" + UUID.randomUUID())
+            .setAsyncExecutorActivate(false)
+            .buildProcessEngine();
+
+    DataSource dataSource = processEngine.getProcessEngineConfiguration().getDataSource();
+    FlowTraceSchemaInitializer.migrate(dataSource);
+    AuditRepository auditRepository = new AuditRepository(dataSource);
+    processEngine
+        .getProcessEngineConfiguration()
+        .getEventDispatcher()
+        .addEventListener(
+            new FlowTraceAuditEventListener(auditRepository),
+            FlowableEngineEventType.VARIABLE_CREATED,
+            FlowableEngineEventType.VARIABLE_UPDATED,
+            FlowableEngineEventType.VARIABLE_DELETED,
+            FlowableEngineEventType.JOB_EXECUTION_SUCCESS,
+            FlowableEngineEventType.JOB_EXECUTION_FAILURE);
+
+    deploymentController = new DeploymentEnrichmentController(processEngine.getRepositoryService());
+    definitionController = new DefinitionEnrichmentController(processEngine.getRepositoryService());
+    instanceController =
+        new InstanceEnrichmentController(
+            processEngine.getRepositoryService(),
+            processEngine.getRuntimeService(),
+            processEngine.getTaskService(),
+            processEngine.getHistoryService(),
+            processEngine.getManagementService(),
+            processEngine);
+    jobHealthController = new JobHealthController(processEngine.getManagementService());
+  }
+
+  @Test
+  void deploymentEnrichmentReturnsResourcesAndDefinitions() {
+    Deployment deployment =
+        processEngine
+            .getRepositoryService()
+            .createDeployment()
+            .name("Order Approval Deployment")
+            .addString("orderApproval.bpmn20.xml", PROCESS_XML)
+            .deploy();
+
+    DeploymentDto dto = deploymentController.getDeployment(deployment.getId());
+
+    assertThat(dto.id()).isEqualTo(deployment.getId());
+    assertThat(dto.version()).isEqualTo(1);
+    // Flowable auto-generates a diagram PNG alongside the BPMN XML on deploy (createDiagramOnDeploy
+    // default), so a single-resource deployment produces two DeploymentDto.Resource entries.
+    assertThat(dto.resources()).hasSize(2);
+    var bpmnResource =
+        dto.resources().stream().filter(r -> r.kind().equals("bpmn")).findFirst().orElseThrow();
+    assertThat(bpmnResource.preview()).contains("orderApproval");
+    var imageResource =
+        dto.resources().stream().filter(r -> r.kind().equals("image")).findFirst().orElseThrow();
+    assertThat(imageResource.preview()).isNull();
+    assertThat(dto.definitions()).hasSize(1);
+    assertThat(dto.definitions().get(0).key()).isEqualTo("orderApproval");
+    assertThat(dto.activity()).hasSize(1);
+    assertThat(dto.activity().get(0).kind()).isEqualTo("created");
+  }
+
+  @Test
+  void definitionEnrichmentReturnsExecutableFlagAndStartForm() {
+    processEngine
+        .getRepositoryService()
+        .createDeployment()
+        .name("Order Approval Deployment")
+        .addString("orderApproval.bpmn20.xml", PROCESS_XML)
+        .deploy();
+
+    ProcessDefinitionDto dto = definitionController.getDefinition("orderApproval", 1);
+
+    assertThat(dto.key()).isEqualTo("orderApproval");
+    assertThat(dto.version()).isEqualTo(1);
+    assertThat(dto.isExecutable()).isTrue();
+    assertThat(dto.hasStartForm()).isFalse();
+    assertThat(dto.deploymentName()).isNotNull();
+  }
+
+  @Test
+  void instanceEnrichmentReflectsGraphStateVariablesAndTasksAcrossTheProcessLifecycle() {
+    processEngine
+        .getRepositoryService()
+        .createDeployment()
+        .name("Order Approval Deployment")
+        .addString("orderApproval.bpmn20.xml", PROCESS_XML)
+        .deploy();
+
+    Map<String, Object> variables = new HashMap<>();
+    variables.put("orderId", "ORD-100");
+    var runtimeInstance =
+        processEngine
+            .getRuntimeService()
+            .startProcessInstanceByKey("orderApproval", "ORD-100", variables);
+    String instanceId = runtimeInstance.getId();
+
+    // -- stage 1: sitting at the user task --------------------------------------------------
+    ProcessInstanceDto atUserTask = instanceController.getInstance(instanceId);
+    assertThat(atUserTask.status()).isEqualTo("active");
+    assertThat(atUserTask.businessKey()).isEqualTo("ORD-100");
+    assertThat(atUserTask.definitionKey()).isEqualTo("orderApproval");
+
+    var startNode = findNode(atUserTask, "start");
+    assertThat(startNode.state()).isEqualTo("completed");
+    assertThat(startNode.x()).isEqualTo(30);
+    assertThat(startNode.y()).isEqualTo(80);
+
+    var reviewNode = findNode(atUserTask, "review");
+    assertThat(reviewNode.state()).isEqualTo("active");
+    assertThat(reviewNode.type()).isEqualTo("userTask");
+
+    var decisionNode = findNode(atUserTask, "decision");
+    assertThat(decisionNode.state()).isEqualTo("pending");
+
+    var edgeF1 = findEdge(atUserTask, "f1");
+    assertThat(edgeF1.taken()).isTrue();
+    assertThat(edgeF1.waypoints()).hasSize(2);
+
+    var edgeF3 = findEdge(atUserTask, "f3");
+    assertThat(edgeF3.taken()).isFalse();
+
+    assertThat(atUserTask.variables()).hasSize(1);
+    var orderIdVariable = atUserTask.variables().get(0);
+    assertThat(orderIdVariable.name()).isEqualTo("orderId");
+    assertThat(orderIdVariable.value()).isEqualTo("ORD-100");
+    assertThat(orderIdVariable.history()).hasSize(1);
+    assertThat(orderIdVariable.history().get(0).newValue()).isEqualTo("ORD-100");
+
+    assertThat(atUserTask.tasks()).hasSize(1);
+    assertThat(atUserTask.tasks().get(0).status()).isEqualTo("pending");
+
+    // -- stage 2: complete the task, take the gateway, reach the end ------------------------
+    Task task =
+        processEngine
+            .getTaskService()
+            .createTaskQuery()
+            .processInstanceId(instanceId)
+            .singleResult();
+    processEngine.getRuntimeService().setVariable(instanceId, "approved", true);
+    processEngine.getTaskService().complete(task.getId());
+
+    ProcessInstanceDto ended = instanceController.getInstance(instanceId);
+    assertThat(ended.status()).isEqualTo("ended");
+    assertThat(ended.endedAt()).isNotNull();
+
+    var reviewNodeAfter = findNode(ended, "review");
+    assertThat(reviewNodeAfter.state()).isEqualTo("completed");
+
+    var decisionNodeAfter = findNode(ended, "decision");
+    assertThat(decisionNodeAfter.state()).isEqualTo("completed");
+    assertThat(decisionNodeAfter.gatewayDecision()).isEqualTo("yes");
+
+    var edgeF3After = findEdge(ended, "f3");
+    assertThat(edgeF3After.taken()).isTrue();
+
+    assertThat(ended.tasks()).hasSize(1);
+    assertThat(ended.tasks().get(0).status()).isEqualTo("completed");
+    assertThat(ended.tasks().get(0).completedBy()).isNull();
+
+    assertThat(ended.trail()).isNotEmpty();
+    assertThat(ended.trail().stream().map(ProcessInstanceDto.TrailEntry::activityId))
+        .contains("start", "review", "decision", "end");
+  }
+
+  @Test
+  void jobHealthReturnsZeroCountsWhenThereAreNoJobs() {
+    JobHealthDto health = jobHealthController.getJobHealth();
+
+    assertThat(health.timers()).isZero();
+    assertThat(health.async()).isZero();
+    assertThat(health.dead()).isZero();
+    assertThat(health.locked()).isZero();
+  }
+
+  private static ProcessInstanceDto.BpmnNode findNode(ProcessInstanceDto instance, String id) {
+    return instance.nodes().stream()
+        .filter(n -> n.id().equals(id))
+        .findFirst()
+        .orElseThrow(() -> new AssertionError("Node not found: " + id));
+  }
+
+  private static ProcessInstanceDto.BpmnEdge findEdge(ProcessInstanceDto instance, String id) {
+    return instance.edges().stream()
+        .filter(e -> e.id().equals(id))
+        .findFirst()
+        .orElseThrow(() -> new AssertionError("Edge not found: " + id));
+  }
+}

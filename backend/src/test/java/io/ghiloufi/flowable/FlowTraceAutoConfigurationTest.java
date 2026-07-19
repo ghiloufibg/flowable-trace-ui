@@ -2,9 +2,19 @@ package io.ghiloufi.flowable;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.ghiloufi.flowable.rest.DefinitionEnrichmentController;
+import io.ghiloufi.flowable.rest.DeploymentEnrichmentController;
+import io.ghiloufi.flowable.rest.InstanceEnrichmentController;
+import io.ghiloufi.flowable.rest.JobEnrichmentController;
+import io.ghiloufi.flowable.rest.JobHealthController;
 import java.util.UUID;
+import org.flowable.engine.HistoryService;
+import org.flowable.engine.ManagementService;
 import org.flowable.engine.ProcessEngine;
 import org.flowable.engine.ProcessEngineConfiguration;
+import org.flowable.engine.RepositoryService;
+import org.flowable.engine.RuntimeService;
+import org.flowable.engine.TaskService;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -40,8 +50,16 @@ class FlowTraceAutoConfigurationTest {
   void activatesAgainstAnExistingProcessEngineBean() {
     ProcessEngine testProcessEngine = buildTestProcessEngine();
 
+    // A real Flowable-Spring integration exposes these as beans automatically; this lightweight
+    // context has to register them explicitly so the enrichment controllers' @Bean methods
+    // (which depend on them) can be autowired.
     contextRunner
         .withBean(ProcessEngine.class, () -> testProcessEngine)
+        .withBean(RepositoryService.class, testProcessEngine::getRepositoryService)
+        .withBean(RuntimeService.class, testProcessEngine::getRuntimeService)
+        .withBean(TaskService.class, testProcessEngine::getTaskService)
+        .withBean(HistoryService.class, testProcessEngine::getHistoryService)
+        .withBean(ManagementService.class, testProcessEngine::getManagementService)
         .run(
             context -> {
               assertThat(context).hasSingleBean(FlowTraceAutoConfiguration.class);
@@ -51,6 +69,11 @@ class FlowTraceAutoConfigurationTest {
                   .extracting(
                       FlowTraceAutoConfiguration.FlowTraceActivationMarker::processEngineName)
                   .isEqualTo(testProcessEngine.getName());
+              assertThat(context).hasSingleBean(DeploymentEnrichmentController.class);
+              assertThat(context).hasSingleBean(DefinitionEnrichmentController.class);
+              assertThat(context).hasSingleBean(JobHealthController.class);
+              assertThat(context).hasSingleBean(JobEnrichmentController.class);
+              assertThat(context).hasSingleBean(InstanceEnrichmentController.class);
             });
   }
 

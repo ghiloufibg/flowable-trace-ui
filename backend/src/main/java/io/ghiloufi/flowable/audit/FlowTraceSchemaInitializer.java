@@ -53,6 +53,7 @@ public final class FlowTraceSchemaInitializer {
           OUTCOME VARCHAR(20) NOT NULL,
           EXCEPTION_MESSAGE TEXT,
           RETRIES_LEFT INTEGER,
+          WORKER VARCHAR(255),
           PRIMARY KEY (ID)
       )
       """;
