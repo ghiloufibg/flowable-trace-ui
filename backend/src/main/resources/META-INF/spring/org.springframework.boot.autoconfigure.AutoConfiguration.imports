@@ -1,1 +1,2 @@
 io.ghiloufi.flowable.FlowTraceAutoConfiguration
+io.ghiloufi.flowable.web.FlowTraceWebAutoConfiguration
