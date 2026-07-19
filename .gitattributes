@@ -1,0 +1,6 @@
+# Normalize line endings to LF in the repository regardless of the local
+# core.autocrlf setting, so Windows checkouts don't reintroduce CRLF and
+# trip prettier/eslint across the whole tree.
+* text=auto eol=lf
+
+*.ico binary
