@@ -33,11 +33,15 @@ export class HttpDeploymentRepository implements DeploymentRepository {
   }
 
   activeInstanceCount(d: Deployment): number {
+    // A deployment commonly bundles multiple process definitions - d.key/d.version alone
+    // (a single pair) can't represent that, so match against every definition it contains
+    // rather than just the deployment's own top-level key/version.
+    const defKeys = new Set(d.definitions.map((def) => `${def.key}::${def.version}`));
     return this.instances
       .listInstances()
       .filter(
         (p: ProcessInstance) =>
-          p.definitionKey === d.key && p.version === d.version && p.status === "active",
+          defKeys.has(`${p.definitionKey}::${p.version}`) && p.status === "active",
       ).length;
   }
 

@@ -15,6 +15,7 @@ import org.flowable.bpmn.model.CallActivity;
 import org.flowable.bpmn.model.EndEvent;
 import org.flowable.bpmn.model.ExclusiveGateway;
 import org.flowable.bpmn.model.FlowElement;
+import org.flowable.bpmn.model.FlowElementsContainer;
 import org.flowable.bpmn.model.GraphicInfo;
 import org.flowable.bpmn.model.ParallelGateway;
 import org.flowable.bpmn.model.Process;
@@ -62,8 +63,19 @@ import org.springframework.web.server.ResponseStatusException;
  * also heuristic (both endpoints reached), not a true per-transition trace - Flowable does not
  * expose sequence-flow-level historic transitions on the public API in a form this phase uses. Node
  * types are limited to the frontend's supported {@code BpmnNodeType} union; unsupported BPMN
- * element types (sub-processes, intermediate events, non-timer boundary events, etc.) are omitted
- * from {@code nodes[]} rather than mislabeled.
+ * element types (sub-process *container* shapes themselves, intermediate events, non-timer boundary
+ * events, etc.) are omitted from {@code nodes[]} rather than mislabeled.
+ *
+ * <p>Flow elements nested inside a sub-process (including an embedded, {@code triggeredByEvent}
+ * event sub-process) ARE walked and included when their own type is otherwise supported - {@link
+ * #collectAllFlowElements(FlowElementsContainer)} recurses into every {@link FlowElementsContainer}
+ * (which {@link Process} and every sub-process type implement) rather than reading only {@code
+ * process.getFlowElements()}, which per Flowable's BPMN model API returns just the top-level
+ * process's own direct children. Found live: a call activity nested inside an event sub-process
+ * (masterclass's {@code refundProcessCallActivity}, inside {@code paymentCallbackEventSubProcess})
+ * was silently absent from {@code nodes[]}/{@code edges[]} even though {@link
+ * HistoryService}-backed data (the trail) correctly included it, because the two code paths walk
+ * the model differently.
  */
 @RestController
 @RequestMapping("/custom/instances")
@@ -103,6 +115,9 @@ public class InstanceEnrichmentController {
     boolean active = historic.getEndTime() == null;
     BpmnModel bpmnModel = repositoryService.getBpmnModel(historic.getProcessDefinitionId());
     Process process = bpmnModel.getProcessById(historic.getProcessDefinitionKey());
+    // Flattened once and reused below: includes elements nested inside sub-processes (see class
+    // Javadoc), not just process.getFlowElements()'s top-level view.
+    List<FlowElement> allFlowElements = collectAllFlowElements(process);
 
     Set<String> activeActivityIds =
         active ? new HashSet<>(runtimeService.getActiveActivityIds(id)) : Set.of();
@@ -121,13 +136,14 @@ public class InstanceEnrichmentController {
     List<ProcessInstanceDto.BpmnNode> nodes =
         buildNodes(
             id,
-            process,
+            allFlowElements,
             bpmnModel,
             activeActivityIds,
             reachedActivityIds,
             tasksByActivityId,
             jobErrorsByActivityId);
-    List<ProcessInstanceDto.BpmnEdge> edges = buildEdges(process, bpmnModel, reachedActivityIds);
+    List<ProcessInstanceDto.BpmnEdge> edges =
+        buildEdges(allFlowElements, bpmnModel, reachedActivityIds);
     List<ProcessInstanceDto.Variable> variables = buildVariables(id, active);
     List<ProcessInstanceDto.TaskItem> tasks = buildTasks(id);
     List<ProcessInstanceDto.TrailEntry> trail = buildTrail(historicActivities);
@@ -227,9 +243,26 @@ public class InstanceEnrichmentController {
     return byActivityId;
   }
 
+  /**
+   * Recursively collects every {@link FlowElement} in {@code container}, including those nested
+   * inside sub-processes (embedded event sub-processes, ad-hoc sub-processes, transactions, etc. -
+   * anything implementing {@link FlowElementsContainer}), not just the container's own direct
+   * children. {@code process.getFlowElements()} alone only returns the top level.
+   */
+  private static List<FlowElement> collectAllFlowElements(FlowElementsContainer container) {
+    List<FlowElement> all = new ArrayList<>();
+    for (FlowElement element : container.getFlowElements()) {
+      all.add(element);
+      if (element instanceof FlowElementsContainer nestedContainer) {
+        all.addAll(collectAllFlowElements(nestedContainer));
+      }
+    }
+    return all;
+  }
+
   private List<ProcessInstanceDto.BpmnNode> buildNodes(
       String processInstanceId,
-      Process process,
+      List<FlowElement> allFlowElements,
       BpmnModel bpmnModel,
       Set<String> activeActivityIds,
       Set<String> reachedActivityIds,
@@ -244,7 +277,7 @@ public class InstanceEnrichmentController {
     }
 
     List<ProcessInstanceDto.BpmnNode> nodes = new ArrayList<>();
-    for (FlowElement element : process.getFlowElements()) {
+    for (FlowElement element : allFlowElements) {
       String type = mapNodeType(element);
       if (type == null) {
         continue;
@@ -283,7 +316,7 @@ public class InstanceEnrichmentController {
 
       String gatewayDecision =
           (element instanceof ExclusiveGateway) && reachedActivityIds.contains(element.getId())
-              ? resolveGatewayDecision(process, element, reachedActivityIds)
+              ? resolveGatewayDecision(allFlowElements, element, reachedActivityIds)
               : null;
 
       nodes.add(
@@ -330,8 +363,8 @@ public class InstanceEnrichmentController {
   }
 
   private static String resolveGatewayDecision(
-      Process process, FlowElement gateway, Set<String> reachedActivityIds) {
-    return process.getFlowElements().stream()
+      List<FlowElement> allFlowElements, FlowElement gateway, Set<String> reachedActivityIds) {
+    return allFlowElements.stream()
         .filter(e -> e instanceof SequenceFlow flow && flow.getSourceRef().equals(gateway.getId()))
         .map(e -> (SequenceFlow) e)
         .filter(flow -> reachedActivityIds.contains(flow.getTargetRef()))
@@ -377,9 +410,9 @@ public class InstanceEnrichmentController {
   }
 
   private List<ProcessInstanceDto.BpmnEdge> buildEdges(
-      Process process, BpmnModel bpmnModel, Set<String> reachedActivityIds) {
+      List<FlowElement> allFlowElements, BpmnModel bpmnModel, Set<String> reachedActivityIds) {
     List<ProcessInstanceDto.BpmnEdge> edges = new ArrayList<>();
-    for (FlowElement element : process.getFlowElements()) {
+    for (FlowElement element : allFlowElements) {
       if (!(element instanceof SequenceFlow flow)) {
         continue;
       }

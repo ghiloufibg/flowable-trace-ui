@@ -7,7 +7,16 @@ import tsConfigPaths from "vite-tsconfig-paths";
 // Plain client-side-rendered SPA config (no TanStack Start / Nitro / SSR).
 // tanstackRouter() must run before viteReact() so generated route code is
 // transformed by the React plugin too.
-export default defineConfig({
+//
+// `base` is only set for the production build, not `vite dev`: the built
+// dist/ is embedded by flow-trace-ui-backend and served at its
+// flowtrace.mount-path (default "/flow-trace", see FlowTraceProperties) -
+// without a matching `base`, every asset URL in the built index.html is
+// absolute from site root and 404s under that backend. Left unset for dev
+// so the Lovable/`npm run dev` workflow keeps serving from root unchanged.
+// Matches the basepath condition in src/router.tsx - keep both in sync.
+export default defineConfig(({ command }) => ({
+  base: command === "build" ? "/flow-trace/" : "/",
   plugins: [
     tanstackRouter({ target: "react", autoCodeSplitting: true }),
     viteReact(),
@@ -21,4 +30,4 @@ export default defineConfig({
     host: "::",
     port: 8080,
   },
-});
+}));

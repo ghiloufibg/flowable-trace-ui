@@ -13,6 +13,7 @@
  * "@/lib/store"`.
  */
 
+import { useSyncExternalStore } from "react";
 import {
   INSTANCES as MOCK_INSTANCES,
   getInstance as mockGetInstance,
@@ -139,6 +140,57 @@ export function getDefinitionRepository(): DefinitionRepository { return definit
 export function getJobRepository(): JobRepository { return jobRepo; }
 
 /* -------------------------------------------------------------------------- */
+/* Change notification                                                        */
+/*                                                                             */
+/* The repositories above are read synchronously by plain function calls with */
+/* no built-in reactivity, so nothing previously told React to re-render once */
+/* hydrateStore() resolved - components only picked up fresh data if some     */
+/* unrelated state change happened to force a re-render anyway (e.g. a route  */
+/* navigation, which coincidentally calls listInstances() etc. again). This   */
+/* store version + subscribe/notify pair, combined with useSyncExternalStore  */
+/* in the hooks below, closes that gap without changing any hook's name or    */
+/* return type - no call site changes needed.                                 */
+/* -------------------------------------------------------------------------- */
+
+let storeVersion = 0;
+const storeListeners = new Set<() => void>();
+
+export function notifyStoreChanged(): void {
+  storeVersion += 1;
+  for (const listener of storeListeners) listener();
+}
+
+function subscribeToStore(listener: () => void): () => void {
+  storeListeners.add(listener);
+  return () => storeListeners.delete(listener);
+}
+
+/**
+ * listInstances()/listDeployments()/etc. all allocate a new array on every call, so wiring
+ * them into useSyncExternalStore directly would give React a different snapshot reference on
+ * every render even when nothing changed - React then logs "The result of getSnapshot should
+ * be cached" and can force extra re-renders. Caching by storeVersion (only recomputing when
+ * notifyStoreChanged() actually fired) keeps the reference stable between renders that don't
+ * cross a real data change.
+ */
+function cachedListSnapshot<T>(compute: () => T[]): () => T[] {
+  let cachedAtVersion = -1;
+  let cached: T[] = [];
+  return () => {
+    if (cachedAtVersion !== storeVersion) {
+      cached = compute();
+      cachedAtVersion = storeVersion;
+    }
+    return cached;
+  };
+}
+
+const getInstancesSnapshot = cachedListSnapshot(() => instanceRepo.listInstances());
+const getDeploymentsSnapshot = cachedListSnapshot(() => deploymentRepo.listDeployments());
+const getDefinitionsSnapshot = cachedListSnapshot(() => definitionRepo.listDefinitions());
+const getJobsSnapshot = cachedListSnapshot(() => jobRepo.listJobs());
+
+/* -------------------------------------------------------------------------- */
 /* Plain accessors — safe from route loaders and non-React code               */
 /* -------------------------------------------------------------------------- */
 
@@ -181,26 +233,41 @@ export function currentActivities(p: ProcessInstance): BpmnNode[] {
 
 /* -------------------------------------------------------------------------- */
 /* React hooks — thin wrappers so components stay decoupled from the source.  */
-/* Swap for TanStack Query when wiring the real backend, without touching     */
-/* call sites.                                                                */
+/* Subscribed via useSyncExternalStore so a resolved hydrateStore() actually  */
+/* triggers a re-render, instead of only showing up on some unrelated state   */
+/* change (e.g. a route navigation).                                         */
 /* -------------------------------------------------------------------------- */
 
-export const useInstances = (): ProcessInstance[] => listInstances();
+export const useInstances = (): ProcessInstance[] =>
+  useSyncExternalStore(subscribeToStore, getInstancesSnapshot);
 export const useInstance = (id: string | undefined): ProcessInstance | undefined =>
-  id ? getInstance(id) : undefined;
+  useSyncExternalStore(subscribeToStore, () => (id ? instanceRepo.getInstance(id) : undefined));
 
-export const useDeployments = (): Deployment[] => listDeployments();
+export const useDeployments = (): Deployment[] =>
+  useSyncExternalStore(subscribeToStore, getDeploymentsSnapshot);
 export const useDeployment = (id: string | undefined): Deployment | undefined =>
-  id ? getDeployment(id) : undefined;
+  useSyncExternalStore(subscribeToStore, () => (id ? deploymentRepo.getDeployment(id) : undefined));
 
-export const useDefinitions = (): ProcessDefinition[] => listDefinitions();
-export const useDefinitionVersions = (key: string): ProcessDefinition[] => listDefinitionVersions(key);
+export const useDefinitions = (): ProcessDefinition[] =>
+  useSyncExternalStore(subscribeToStore, getDefinitionsSnapshot);
+
+const definitionVersionsCache = new Map<string, { version: number; value: ProcessDefinition[] }>();
+export const useDefinitionVersions = (key: string): ProcessDefinition[] =>
+  useSyncExternalStore(subscribeToStore, () => {
+    const entry = definitionVersionsCache.get(key);
+    if (entry && entry.version === storeVersion) return entry.value;
+    const value = definitionRepo.listDefinitionVersions(key);
+    definitionVersionsCache.set(key, { version: storeVersion, value });
+    return value;
+  });
+
 export const useDefinition = (key: string, version: number): ProcessDefinition | undefined =>
-  getDefinition(key, version);
+  useSyncExternalStore(subscribeToStore, () => definitionRepo.getDefinition(key, version));
 
-export const useJobs = (): EngineJob[] => listJobs();
+export const useJobs = (): EngineJob[] =>
+  useSyncExternalStore(subscribeToStore, getJobsSnapshot);
 export const useJob = (id: string | undefined): EngineJob | undefined =>
-  id ? getJob(id) : undefined;
+  useSyncExternalStore(subscribeToStore, () => (id ? jobRepo.getJob(id) : undefined));
 
 /* -------------------------------------------------------------------------- */
 /* Convenience re-exports                                                     */

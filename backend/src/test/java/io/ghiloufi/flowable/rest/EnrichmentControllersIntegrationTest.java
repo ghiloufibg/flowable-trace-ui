@@ -91,6 +91,68 @@ class EnrichmentControllersIntegrationTest {
       </definitions>
       """;
 
+  private static final String SUBPROCESS_XML =
+      """
+      <?xml version="1.0" encoding="UTF-8"?>
+      <definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                   xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+                   xmlns:omgdc="http://www.omg.org/spec/DD/20100524/DC"
+                   xmlns:omgdi="http://www.omg.org/spec/DD/20100524/DI"
+                   targetNamespace="io.ghiloufi.flowable.rest">
+        <process id="withSubProcess" name="Has A SubProcess" isExecutable="true">
+          <startEvent id="start" name="Start"/>
+          <sequenceFlow id="f1" sourceRef="start" targetRef="subProc"/>
+          <subProcess id="subProc" name="Approval SubProcess">
+            <startEvent id="innerStart" name="Inner Start"/>
+            <sequenceFlow id="innerF1" sourceRef="innerStart" targetRef="innerTask"/>
+            <userTask id="innerTask" name="Inner Review"/>
+            <sequenceFlow id="innerF2" sourceRef="innerTask" targetRef="innerEnd"/>
+            <endEvent id="innerEnd" name="Inner End"/>
+          </subProcess>
+          <sequenceFlow id="f2" sourceRef="subProc" targetRef="end"/>
+          <endEvent id="end" name="End"/>
+        </process>
+        <bpmndi:BPMNDiagram id="diagram">
+          <bpmndi:BPMNPlane bpmnElement="withSubProcess">
+            <bpmndi:BPMNShape bpmnElement="start">
+              <omgdc:Bounds x="30" y="80" width="30" height="30"/>
+            </bpmndi:BPMNShape>
+            <bpmndi:BPMNShape bpmnElement="subProc">
+              <omgdc:Bounds x="120" y="40" width="260" height="120"/>
+            </bpmndi:BPMNShape>
+            <bpmndi:BPMNShape bpmnElement="innerStart">
+              <omgdc:Bounds x="140" y="80" width="30" height="30"/>
+            </bpmndi:BPMNShape>
+            <bpmndi:BPMNShape bpmnElement="innerTask">
+              <omgdc:Bounds x="220" y="65" width="100" height="60"/>
+            </bpmndi:BPMNShape>
+            <bpmndi:BPMNShape bpmnElement="innerEnd">
+              <omgdc:Bounds x="360" y="80" width="30" height="30"/>
+            </bpmndi:BPMNShape>
+            <bpmndi:BPMNShape bpmnElement="end">
+              <omgdc:Bounds x="440" y="80" width="30" height="30"/>
+            </bpmndi:BPMNShape>
+            <bpmndi:BPMNEdge bpmnElement="f1">
+              <omgdi:waypoint x="60" y="95"/>
+              <omgdi:waypoint x="120" y="95"/>
+            </bpmndi:BPMNEdge>
+            <bpmndi:BPMNEdge bpmnElement="innerF1">
+              <omgdi:waypoint x="170" y="95"/>
+              <omgdi:waypoint x="220" y="95"/>
+            </bpmndi:BPMNEdge>
+            <bpmndi:BPMNEdge bpmnElement="innerF2">
+              <omgdi:waypoint x="320" y="95"/>
+              <omgdi:waypoint x="360" y="95"/>
+            </bpmndi:BPMNEdge>
+            <bpmndi:BPMNEdge bpmnElement="f2">
+              <omgdi:waypoint x="380" y="95"/>
+              <omgdi:waypoint x="440" y="95"/>
+            </bpmndi:BPMNEdge>
+          </bpmndi:BPMNPlane>
+        </bpmndi:BPMNDiagram>
+      </definitions>
+      """;
+
   private ProcessEngine processEngine;
   private DeploymentEnrichmentController deploymentController;
   private DefinitionEnrichmentController definitionController;
@@ -262,6 +324,64 @@ class EnrichmentControllersIntegrationTest {
     assertThat(ended.trail()).isNotEmpty();
     assertThat(ended.trail().stream().map(ProcessInstanceDto.TrailEntry::activityId))
         .contains("start", "review", "decision", "end");
+  }
+
+  @Test
+  void instanceEnrichmentIncludesNodesAndEdgesNestedInsideAnEmbeddedSubProcess() {
+    processEngine
+        .getRepositoryService()
+        .createDeployment()
+        .name("SubProcess Nesting Deployment")
+        .addString("withSubProcess.bpmn20.xml", SUBPROCESS_XML)
+        .deploy();
+
+    String instanceId =
+        processEngine.getRuntimeService().startProcessInstanceByKey("withSubProcess").getId();
+
+    // -- stage 1: sitting at the userTask nested inside the subProcess ----------------------
+    ProcessInstanceDto atInnerTask = instanceController.getInstance(instanceId);
+
+    // process.getFlowElements() alone would never see these - they're children of the
+    // subProcess container, not of the top-level process. This is exactly what
+    // collectAllFlowElements()'s recursion into every FlowElementsContainer exists to fix.
+    var innerTaskNode = findNode(atInnerTask, "innerTask");
+    assertThat(innerTaskNode.type()).isEqualTo("userTask");
+    assertThat(innerTaskNode.state()).isEqualTo("active");
+
+    var innerStartNode = findNode(atInnerTask, "innerStart");
+    assertThat(innerStartNode.state()).isEqualTo("completed");
+
+    var innerF1Edge = findEdge(atInnerTask, "innerF1");
+    assertThat(innerF1Edge.taken()).isTrue();
+
+    var innerF2Edge = findEdge(atInnerTask, "innerF2");
+    assertThat(innerF2Edge.taken()).isFalse();
+
+    // the subProcess container shape itself is not a supported node type - only its children
+    // are walked and surfaced, per the class-level Javadoc on InstanceEnrichmentController.
+    assertThat(atInnerTask.nodes().stream().map(ProcessInstanceDto.BpmnNode::id))
+        .doesNotContain("subProc");
+
+    // -- stage 2: complete the inner task, subProcess ends, outer flow reaches "end" --------
+    Task innerTask =
+        processEngine
+            .getTaskService()
+            .createTaskQuery()
+            .processInstanceId(instanceId)
+            .singleResult();
+    processEngine.getTaskService().complete(innerTask.getId());
+
+    ProcessInstanceDto ended = instanceController.getInstance(instanceId);
+    assertThat(ended.status()).isEqualTo("ended");
+
+    var innerF2EdgeAfter = findEdge(ended, "innerF2");
+    assertThat(innerF2EdgeAfter.taken()).isTrue();
+
+    var outerF2Edge = findEdge(ended, "f2");
+    assertThat(outerF2Edge.taken()).isTrue();
+
+    assertThat(ended.trail().stream().map(ProcessInstanceDto.TrailEntry::activityId))
+        .contains("innerStart", "innerTask", "innerEnd");
   }
 
   @Test

@@ -48,7 +48,7 @@ export function AppShell({ children, headerRight }: Props) {
       if (!q) return true;
       return (
         p.id.toLowerCase().includes(q) ||
-        p.businessKey.toLowerCase().includes(q) ||
+        p.businessKey?.toLowerCase().includes(q) ||
         p.definitionName.toLowerCase().includes(q) ||
         p.definitionKey.toLowerCase().includes(q)
       );

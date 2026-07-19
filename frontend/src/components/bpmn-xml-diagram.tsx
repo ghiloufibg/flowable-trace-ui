@@ -466,13 +466,15 @@ export function BpmnXmlDiagram({
         </div>
       )}
 
+      {/* top-12, not top-3: instances.$id.tsx renders its own "BPMN source" control at
+          left-3 top-3 in this same corner - stack below it rather than overlap. */}
       {warning && (
-        <div className="absolute left-3 top-3 z-20 rounded-md border border-warning/50 bg-warning/10 px-2 py-1 text-[11px] text-warning">
+        <div className="absolute left-3 top-12 z-20 rounded-md border border-warning/50 bg-warning/10 px-2 py-1 text-[11px] text-warning">
           {warning}
         </div>
       )}
       {importErr && (
-        <div className="absolute left-3 top-3 z-20 max-w-md rounded-md border border-danger/50 bg-danger/10 px-3 py-2 text-[11px] text-danger">
+        <div className="absolute left-3 top-12 z-20 max-w-md rounded-md border border-danger/50 bg-danger/10 px-3 py-2 text-[11px] text-danger">
           <div className="font-semibold mb-0.5">Invalid BPMN XML</div>
           <div className="mono">{importErr}</div>
         </div>

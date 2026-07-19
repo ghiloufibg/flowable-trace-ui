@@ -1,19 +1,19 @@
 /**
  * Store bootstrap — installs HTTP-backed repositories and drives hydration.
  *
- * This is the ONE file that changes when you switch to a real backend:
- *   1. Set VITE_FLOWABLE_API_URL and VITE_CUSTOM_API_URL to your servers.
- *   2. Delete the synchronous mock-seed block below (or gate it on
- *      `import.meta.env.DEV`). The rest of the app never imports mock data
- *      directly — it reads through the store, which reads through these
- *      repositories.
- *
- * The synchronous seed exists so SSR and the first client paint have data
- * before the HTTP hydrate() resolves. Removing it just means the initial
- * render is empty until hydrateStore() finishes; no component change needed.
+ * Always points at the real backend (VITE_FLOWABLE_API_URL/VITE_CUSTOM_API_URL,
+ * defaulting to /process-api and /custom - see @/lib/api/client.ts). The
+ * synchronous local-mock seed below is gated to `import.meta.env.DEV` only:
+ * it exists purely so the Lovable/`npm run dev` preview loop has something to
+ * show before a real backend might be reachable. A production build never
+ * seeds fabricated data - it starts empty and fills in once hydrateStore()
+ * resolves, and store.ts's hooks now actually re-render when that happens
+ * (see notifyStoreChanged()) instead of only updating on some unrelated
+ * state change.
  */
 
 import {
+  notifyStoreChanged,
   setDefinitionRepository,
   setDeploymentRepository,
   setInstanceRepository,
@@ -54,16 +54,18 @@ function installIfNeeded(): void {
 }
 
 /**
- * Synchronous seed from local mock modules. Guarantees SSR + first paint
- * render with realistic data even before hydrateStore() runs. Delete when
- * pointing at a real backend.
+ * Synchronous seed from local mock modules — dev-preview only (see class
+ * Javadoc-style comment above). No-op in a production build, so a real
+ * consumer's deployment never shows fabricated demo data at any point.
  */
 export function seedFromLocalMocks(): void {
+  if (!import.meta.env.DEV) return;
   installIfNeeded();
   instanceRepo!.seed(MOCK_INSTANCES);
   deploymentRepo!.seed(mockListDeployments());
   definitionRepo!.seed(mockListDefinitions());
   jobRepo!.seed(mockListJobs());
+  notifyStoreChanged();
 }
 
 /**
@@ -88,7 +90,14 @@ export function hydrateStore(): Promise<void> {
       definitionRepo!.hydrate(),
       jobRepo!.hydrate(),
     ])
-      .then(() => undefined)
+      .then(() => {
+        // The one line that was missing before: without this, every
+        // repository's cache refreshes correctly but nothing tells React to
+        // re-render, so components keep showing whatever they last rendered
+        // (seed data, or nothing) until some unrelated state change forces
+        // one anyway.
+        notifyStoreChanged();
+      })
       .catch((err) => {
         // Reset so a later retry re-fires the requests.
         hydratePromise = null;
