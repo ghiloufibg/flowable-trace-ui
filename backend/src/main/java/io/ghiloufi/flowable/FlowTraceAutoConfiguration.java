@@ -1,7 +1,10 @@
 package io.ghiloufi.flowable;
 
+import io.ghiloufi.flowable.audit.AuditRepository;
+import io.ghiloufi.flowable.audit.FlowTraceAuditEventListener;
 import io.ghiloufi.flowable.audit.FlowTraceSchemaInitializer;
 import javax.sql.DataSource;
+import org.flowable.common.engine.api.delegate.event.FlowableEngineEventType;
 import org.flowable.engine.ProcessEngine;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -55,6 +58,31 @@ public class FlowTraceAutoConfiguration {
     DataSource dataSource = processEngine.getProcessEngineConfiguration().getDataSource();
     FlowTraceSchemaInitializer.migrate(dataSource);
     return new FlowTraceSchemaMigration(dataSource);
+  }
+
+  /**
+   * Registers the audit listener on the existing engine's event dispatcher - the only supported
+   * runtime-attachment point, since ProcessEngineConfigurator only applies at engine-build time and
+   * we never build the engine ourselves. Depends on FlowTraceSchemaMigration as a constructor
+   * argument purely to make Spring create it first, guaranteeing the audit tables exist before this
+   * listener can write to them.
+   */
+  @Bean
+  public FlowTraceAuditEventListener flowTraceAuditEventListener(
+      FlowTraceSchemaMigration schemaMigration) {
+    AuditRepository auditRepository = new AuditRepository(schemaMigration.dataSource());
+    FlowTraceAuditEventListener listener = new FlowTraceAuditEventListener(auditRepository);
+    processEngine
+        .getProcessEngineConfiguration()
+        .getEventDispatcher()
+        .addEventListener(
+            listener,
+            FlowableEngineEventType.VARIABLE_CREATED,
+            FlowableEngineEventType.VARIABLE_UPDATED,
+            FlowableEngineEventType.VARIABLE_DELETED,
+            FlowableEngineEventType.JOB_EXECUTION_SUCCESS,
+            FlowableEngineEventType.JOB_EXECUTION_FAILURE);
+    return listener;
   }
 
   @EventListener(ContextRefreshedEvent.class)
