@@ -123,6 +123,14 @@
         <version>3.13.0</version>
         <configuration>
           <release>21</release>
+          <!-- Without this, Spring MVC can't resolve @PathVariable/@RequestParam names from
+               bytecode at runtime unless every one is given an explicit name - confirmed via
+               Phase 9's real HTTP-level end-to-end test throwing
+               "Name for argument of type [String] not specified" the moment a real request hit
+               @PathVariable String id. Phase 5's controller tests never caught this because
+               they called controller methods directly in Java, bypassing Spring MVC's argument
+               resolution entirely. -->
+          <parameters>true</parameters>
         </configuration>
       </plugin>
       <plugin>

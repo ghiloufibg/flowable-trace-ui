@@ -19,6 +19,7 @@ import org.flowable.engine.TaskService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.AutoConfigureOrder;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -26,12 +27,36 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.event.ContextRefreshedEvent;
 import org.springframework.context.event.EventListener;
+import org.springframework.core.Ordered;
 
 /**
  * Activates only when a {@link ProcessEngine} bean already exists in the context. Never creates one
  * itself — see decision #4 in claudedocs/backend-library-design.md.
+ *
+ * <p>{@code @AutoConfigureOrder(Ordered.LOWEST_PRECEDENCE)} is required, not optional: without some
+ * ordering hint, Spring Boot has no guarantee this class is evaluated after whichever Flowable
+ * auto-configuration class actually registers the {@code ProcessEngine} bean definition, so
+ * {@code @ConditionalOnBean(ProcessEngine.class)} can see no bean yet and silently never activate -
+ * even though the bean exists once the context has fully refreshed. An earlier attempt used
+ * {@code @AutoConfigureAfter(ProcessEngineAutoConfiguration.class)} targeting that specific class;
+ * empirically (via Spring Boot's condition evaluation report, {@code -Ddebug=true}) that did NOT
+ * fix it - Flowable's internal {@code @Import} structure for engine bean registration isn't
+ * something worth hard-coding a specific class against.
+ * {@code @AutoConfigureOrder(LOWEST_PRECEDENCE)} sorts this class into the last priority group
+ * among all auto-configurations, which reliably runs after Flowable's (unordered, default-
+ * priority) auto-configuration classes regardless of which one specifically creates the bean -
+ * confirmed by rerunning Phase 9's end-to-end test after switching to it.
+ *
+ * <p>This was missed entirely by every earlier test, which all pre-registered a {@code
+ * ProcessEngine} bean directly via {@code ApplicationContextRunner.withBean(...)}, sidestepping
+ * auto-configuration ordering altogether. Only Phase 9's real end-to-end test (a full Spring Boot
+ * app that bootstraps its own engine via {@code flowable-spring-boot-starter-process-rest}, the way
+ * a real consumer actually uses this library) caught the gap: the official Flowable REST API and
+ * the embedded frontend both worked, but every {@code custom/**} endpoint 404'd because this whole
+ * auto-configuration had silently not activated.
  */
 @AutoConfiguration
+@AutoConfigureOrder(Ordered.LOWEST_PRECEDENCE)
 @ConditionalOnClass(ProcessEngine.class)
 @ConditionalOnBean(ProcessEngine.class)
 @ConditionalOnProperty(
