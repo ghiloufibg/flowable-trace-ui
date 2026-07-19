@@ -1,16 +1,20 @@
 /**
  * HTTP-backed JobRepository — Flowable REST for the list, custom endpoint
  * for aggregated KPIs (`jobHealth`).
+ *
+ * Known gap: `management/jobs` only returns executable/async jobs per real
+ * Flowable REST semantics (ManagementService.createJobQuery()) - timer jobs
+ * (management/timer-jobs) and dead-letter jobs (management/deadletter-jobs)
+ * live under separate endpoints and aren't merged in here yet, so
+ * listJobs()/jobsForInstance() will under-represent them against the real
+ * backend. jobHealth() is unaffected - the backend's /custom/jobs/health
+ * aggregates across all three job tables correctly.
  */
 
 import type { JobRepository } from "@/lib/store";
 import type { EngineJob } from "@/lib/types";
 import { customClient, flowableClient } from "@/lib/api/client";
-import {
-  mapJob,
-  type FlowableList,
-  type FlowableJobDTO,
-} from "@/lib/api/flowable-mappers";
+import type { FlowableList, FlowableJobDTO } from "@/lib/api/flowable-mappers";
 
 type JobHealth = ReturnType<JobRepository["jobHealth"]>;
 
@@ -85,9 +89,7 @@ export class HttpJobRepository implements JobRepository {
     await Promise.all(
       list.data.map(async (dto) => {
         nextOrder.push(dto.id);
-        const domain =
-          mapJob(dto) ??
-          (await customClient.get<EngineJob>(`jobs/${dto.id}`));
+        const domain = await customClient.get<EngineJob>(`jobs/${dto.id}`);
         nextMap.set(dto.id, domain);
       }),
     );

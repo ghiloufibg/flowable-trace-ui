@@ -6,11 +6,7 @@
 import type { DeploymentRepository } from "@/lib/store";
 import type { Deployment, ProcessInstance } from "@/lib/types";
 import { customClient, flowableClient } from "@/lib/api/client";
-import {
-  mapDeployment,
-  type FlowableList,
-  type FlowableDeploymentDTO,
-} from "@/lib/api/flowable-mappers";
+import type { FlowableList, FlowableDeploymentDTO } from "@/lib/api/flowable-mappers";
 import type { HttpInstanceRepository } from "@/lib/repositories/http-instance";
 
 export class HttpDeploymentRepository implements DeploymentRepository {
@@ -39,14 +35,15 @@ export class HttpDeploymentRepository implements DeploymentRepository {
   activeInstanceCount(d: Deployment): number {
     return this.instances
       .listInstances()
-      .filter((p: ProcessInstance) => p.definitionKey === d.key && p.version === d.version && p.status === "active")
-      .length;
+      .filter(
+        (p: ProcessInstance) =>
+          p.definitionKey === d.key && p.version === d.version && p.status === "active",
+      ).length;
   }
 
   async hydrate(): Promise<void> {
-    const list = await flowableClient.get<FlowableList<FlowableDeploymentDTO>>(
-      "repository/deployments",
-    );
+    const list =
+      await flowableClient.get<FlowableList<FlowableDeploymentDTO>>("repository/deployments");
 
     const nextOrder: string[] = [];
     const nextMap = new Map<string, Deployment>();
@@ -54,9 +51,7 @@ export class HttpDeploymentRepository implements DeploymentRepository {
     await Promise.all(
       list.data.map(async (dto) => {
         nextOrder.push(dto.id);
-        const domain =
-          mapDeployment(dto) ??
-          (await customClient.get<Deployment>(`deployments/${dto.id}`));
+        const domain = await customClient.get<Deployment>(`deployments/${dto.id}`);
         nextMap.set(dto.id, domain);
       }),
     );

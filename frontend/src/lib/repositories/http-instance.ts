@@ -4,21 +4,17 @@
  * Reads are synchronous against an in-memory cache. Callers (routes,
  * components) never change shape. The cache is filled two ways:
  *   1. `seed(instances)` — synchronous seed used by store-bootstrap to
- *      guarantee SSR + first paint have data.
- *   2. `hydrate()` — async refresh from the Flowable REST endpoint, then a
- *      /custom/* detail fetch per instance to obtain the full BPMN graph
- *      (nodes/edges/variables/trail/tasks/jobs) that Flowable REST can't
- *      return in one call.
+ *      guarantee first paint has data.
+ *   2. `hydrate()` — async refresh: list ids from the real Flowable REST
+ *      endpoint, then a /custom/instances/:id fetch per instance for the
+ *      full BPMN graph (nodes/edges/variables/trail/tasks/jobs) that
+ *      Flowable REST doesn't return directly.
  */
 
 import type { InstanceRepository } from "@/lib/store";
 import type { ProcessInstance } from "@/lib/types";
 import { customClient, flowableClient } from "@/lib/api/client";
-import {
-  mapProcessInstance,
-  type FlowableList,
-  type FlowableProcessInstanceDTO,
-} from "@/lib/api/flowable-mappers";
+import type { FlowableList, FlowableProcessInstanceDTO } from "@/lib/api/flowable-mappers";
 
 export class HttpInstanceRepository implements InstanceRepository {
   private byId = new Map<string, ProcessInstance>();
@@ -52,11 +48,7 @@ export class HttpInstanceRepository implements InstanceRepository {
     await Promise.all(
       list.data.map(async (dto) => {
         nextOrder.push(dto.id);
-        // Mock backend embeds the enriched domain object; real backend would
-        // require a follow-up fetch to /custom/instances/:id.
-        const domain =
-          mapProcessInstance(dto) ??
-          (await customClient.get<ProcessInstance>(`instances/${dto.id}`));
+        const domain = await customClient.get<ProcessInstance>(`instances/${dto.id}`);
         nextMap.set(dto.id, domain);
       }),
     );

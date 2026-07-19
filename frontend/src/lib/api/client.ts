@@ -1,19 +1,25 @@
 /**
  * Minimal fetch wrapper used by the HTTP repositories.
  *
- * Base URLs come from env vars so switching to a real backend is
+ * Base URLs come from env vars so pointing at a different deployment is
  * configuration-only:
- *   - VITE_FLOWABLE_API_URL — Flowable REST API v7.x root
- *                             (e.g. https://engine.example.com/flowable-rest/service)
- *   - VITE_CUSTOM_API_URL   — Custom backend for things Flowable REST can't
- *                             return out of the box (full graph, aggregated
- *                             KPIs, resource previews, …)
+ *   - VITE_FLOWABLE_API_URL — the flow-trace-ui-backend library's embedded
+ *                             Flowable REST API (flowable-spring-boot-starter-
+ *                             process-rest, default servlet path /process-api)
+ *   - VITE_CUSTOM_API_URL   — the library's own /custom/* enrichment API
+ *                             (full graph, aggregated KPIs, resource
+ *                             previews, …) - Flowable REST can't return these
+ *                             directly.
  *
- * Defaults point at the local mock server at /api/mock/{flowable|custom}.
+ * Defaults assume the frontend is served by the same backend that exposes
+ * these APIs (see claudedocs/backend-library-design.md). No auth headers are
+ * added: the real Flowable REST starter has no security of its own (verified
+ * in Phase 2's spike), and this library's endpoints inherit whatever the
+ * consumer app protects them with, if anything.
  */
 
-const DEFAULT_FLOWABLE = "/api/mock/flowable";
-const DEFAULT_CUSTOM = "/api/mock/custom";
+const DEFAULT_FLOWABLE = "/process-api";
+const DEFAULT_CUSTOM = "/custom";
 
 function env(name: string): string | undefined {
   const v = (import.meta.env as Record<string, string | undefined>)[name];

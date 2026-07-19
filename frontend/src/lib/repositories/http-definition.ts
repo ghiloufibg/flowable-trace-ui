@@ -10,17 +10,15 @@
 import type { DefinitionRepository } from "@/lib/store";
 import type { ProcessDefinition, ProcessInstance } from "@/lib/types";
 import { customClient, flowableClient } from "@/lib/api/client";
-import {
-  mapProcessDefinition,
-  type FlowableList,
-  type FlowableProcessDefinitionDTO,
-} from "@/lib/api/flowable-mappers";
+import type { FlowableList, FlowableProcessDefinitionDTO } from "@/lib/api/flowable-mappers";
 import type { HttpInstanceRepository } from "@/lib/repositories/http-instance";
 
 export class HttpDefinitionRepository implements DefinitionRepository {
   private all: ProcessDefinition[] = [];
 
-  constructor(private readonly instances: Pick<HttpInstanceRepository, "listInstances" | "getInstance">) {}
+  constructor(
+    private readonly instances: Pick<HttpInstanceRepository, "listInstances" | "getInstance">,
+  ) {}
 
   seed(items: ProcessDefinition[]): void {
     this.all = items;
@@ -68,9 +66,9 @@ export class HttpDefinitionRepository implements DefinitionRepository {
     const next: ProcessDefinition[] = [];
     await Promise.all(
       list.data.map(async (dto) => {
-        const domain =
-          mapProcessDefinition(dto) ??
-          (await customClient.get<ProcessDefinition>(`definitions/${dto.key}/${dto.version}`));
+        const domain = await customClient.get<ProcessDefinition>(
+          `definitions/${dto.key}/${dto.version}`,
+        );
         next.push(domain);
       }),
     );

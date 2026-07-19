@@ -1,94 +1,89 @@
 /**
- * Flowable REST v7.x → domain-type mappers.
+ * Real Flowable REST v7.1 response shapes (flowable-spring-boot-starter-process-rest).
  *
- * The mock server returns Flowable-shaped payloads that also carry the full
- * domain object under a `_domain` extension key for local convenience. Real
- * Flowable REST responses will NOT carry `_domain` — the repositories are
- * responsible for calling the matching /custom/* endpoint to fetch the
- * enriched detail (BPMN graph, activity trail, variables …). Mappers stay
- * pure so that switching to the real backend is a one-line change per repo.
+ * Field names here were extracted directly from the deployed backend's actual DTO classes
+ * (org.flowable.rest.service.api.*), not guessed - see
+ * claudedocs/backend-library-design.md §12. Every repository always calls the matching
+ * /custom/* enrichment endpoint for the full domain object; these interfaces only carry the
+ * fields repositories need to construct that follow-up request (id, or key+version), plus the
+ * rest of the real shape for documentation.
  */
-
-import type {
-  Deployment,
-  EngineJob,
-  ProcessDefinition,
-  ProcessInstance,
-} from "@/lib/types";
 
 export interface FlowableList<T> {
   data: T[];
   total: number;
+  start: number;
+  sort: string;
+  order: string;
+  size: number;
 }
 
 export interface FlowableProcessInstanceDTO {
   id: string;
+  url: string;
+  name?: string;
   businessKey?: string;
-  processDefinitionKey: string;
-  processDefinitionName?: string;
-  processDefinitionVersion: number;
-  startTime: string;
-  endTime?: string;
-  startUserId?: string;
-  ended: boolean;
+  businessStatus?: string;
   suspended: boolean;
-  _domain?: ProcessInstance;
+  ended: boolean;
+  processDefinitionId: string;
+  processDefinitionUrl: string;
+  processDefinitionName?: string;
+  processDefinitionDescription?: string;
+  activityId?: string;
+  startUserId?: string;
+  startTime: string;
+  superProcessInstanceId?: string;
+  tenantId?: string;
+  completed: boolean;
 }
 
 export interface FlowableDeploymentDTO {
   id: string;
   name?: string;
-  category?: string;
   deploymentTime: string;
+  category?: string;
+  parentDeploymentId?: string;
+  url: string;
   tenantId?: string;
-  _domain?: Deployment;
 }
 
 export interface FlowableProcessDefinitionDTO {
   id: string;
+  url: string;
   key: string;
-  name?: string;
   version: number;
-  deploymentId: string;
+  name?: string;
   tenantId?: string;
+  deploymentId: string;
+  deploymentUrl: string;
+  category?: string;
+  resource: string;
+  description?: string;
+  diagramResource?: string;
+  graphicalNotationDefined: boolean;
   suspended: boolean;
-  _domain?: ProcessDefinition;
+  startFormDefined: boolean;
 }
 
 export interface FlowableJobDTO {
   id: string;
-  jobType: string;
-  processInstanceId: string;
-  processDefinitionId: string;
-  elementId: string;
+  url: string;
+  correlationId?: string;
+  processInstanceId?: string;
+  processInstanceUrl?: string;
+  processDefinitionId?: string;
+  processDefinitionUrl?: string;
+  executionId?: string;
+  executionUrl?: string;
+  elementId?: string;
   elementName?: string;
-  createTime: string;
-  dueDate?: string;
+  handlerType?: string;
   retries: number;
   exceptionMessage?: string;
-  _domain?: EngineJob;
-}
-
-/**
- * These "map*" helpers pass through the mock's `_domain` extension when
- * present. When wiring the real backend, replace each function body with a
- * call to the corresponding /custom/* enrichment endpoint that returns the
- * full domain object (or build it from separate Flowable REST calls to
- * /runtime/variables, /history/historic-activity-instances, etc.).
- */
-
-export function mapProcessInstance(dto: FlowableProcessInstanceDTO): ProcessInstance | undefined {
-  return dto._domain;
-}
-
-export function mapDeployment(dto: FlowableDeploymentDTO): Deployment | undefined {
-  return dto._domain;
-}
-
-export function mapProcessDefinition(dto: FlowableProcessDefinitionDTO): ProcessDefinition | undefined {
-  return dto._domain;
-}
-
-export function mapJob(dto: FlowableJobDTO): EngineJob | undefined {
-  return dto._domain;
+  dueDate?: string;
+  createTime: string;
+  lockOwner?: string;
+  lockExpirationTime?: string;
+  tenantId?: string;
 }
