@@ -13,20 +13,19 @@ existing `ProcessEngine` and database — is documented in
 design decisions; check it before implementing any backend feature, and treat its
 "Open decisions" section as unvalidated until a spike confirms them.
 
-**Current repo state vs. planned state:** today everything still lives at the repo root as
-a single npm/Vite project (no Maven modules exist yet). The design plans a restructuring
-into `frontend/` + `backend/` Maven modules (root `pom.xml`, frontend content moved under
-`frontend/`, new `backend/` module added). Until that restructuring happens, the paths below
-refer to today's root-level `src/`; once restructured, the same rules apply under
-`frontend/src/`.
+**Repo layout:** this is now a Maven multi-module project (`io.ghiloufi.flowable:flow-trace-ui`).
+`frontend/` holds the original React/Vite project unchanged in content (moved via `git mv`,
+history preserved); `backend/` is the Spring Boot 3 / Java 21 auto-configuration library
+being built per the design doc. See `claudedocs/implementation-plan.md` for the phased
+build-out and current progress.
 
 **No git remote is currently configured** (intentionally removed to avoid accidentally
 pushing to the Lovable-connected repo). Don't add one without the user asking.
 
 ## Component code is owned by Lovable
 
-Never modify component/UI code — anything under `src/components/`, `src/routes/*.tsx`
-route components, or other JSX/TSX presentational code — unless the user explicitly
+Never modify component/UI code — anything under `frontend/src/components/`,
+`frontend/src/routes/*.tsx` route components, or other JSX/TSX presentational code — unless the user explicitly
 validates that specific change first. Component-level changes are expected to flow through
 Lovable's workflow, not through Claude Code.
 
@@ -35,9 +34,10 @@ making the edit.
 
 ## Frontend data-access/contract layer: no large or uncertain refactors
 
-Files in the data-access/contract layer — `src/lib/api/client.ts`,
-`src/lib/api/flowable-mappers.ts`, `src/lib/repositories/http-*.ts`, and `src/lib/store.ts` —
-can be touched for small, well-understood changes. But if a needed refactor of this layer is:
+Files in the data-access/contract layer — `frontend/src/lib/api/client.ts`,
+`frontend/src/lib/api/flowable-mappers.ts`, `frontend/src/lib/repositories/http-*.ts`, and
+`frontend/src/lib/store.ts` — can be touched for small, well-understood changes. But if a
+needed refactor of this layer is:
 
 - large in scope (touches many of these files or restructures the contract significantly), or
 - uncertain (the mapping between old and new shapes isn't fully clear), or
