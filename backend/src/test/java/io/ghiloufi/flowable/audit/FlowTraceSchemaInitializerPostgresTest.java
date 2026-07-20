@@ -10,6 +10,7 @@ import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.DockerClientFactory;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -19,7 +20,13 @@ import org.testcontainers.containers.PostgreSQLContainer;
  * issues (per claudedocs/backend-library-design.md §10). Skips gracefully when Docker isn't
  * available (e.g. this dev environment has the Docker CLI but no running daemon) rather than
  * failing the build; CI environments with Docker will actually exercise it.
+ *
+ * <p>Tagged {@code smoke} - excluded from the default {@code mvn verify} run (see backend/pom.xml)
+ * and run instead by CI's dedicated {@code backend-smoke} job, which - unlike a contributor's own
+ * machine - is guaranteed to have Docker available. See
+ * claudedocs/design-backend-postgres-smoke-test.md.
  */
+@Tag("smoke")
 class FlowTraceSchemaInitializerPostgresTest {
 
   private static PostgreSQLContainer<?> postgres;
