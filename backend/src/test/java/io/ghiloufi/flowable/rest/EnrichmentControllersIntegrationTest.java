@@ -9,6 +9,8 @@ import io.ghiloufi.flowable.rest.dto.DeploymentDto;
 import io.ghiloufi.flowable.rest.dto.JobHealthDto;
 import io.ghiloufi.flowable.rest.dto.ProcessDefinitionDto;
 import io.ghiloufi.flowable.rest.dto.ProcessInstanceDto;
+import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -17,6 +19,7 @@ import org.flowable.common.engine.api.delegate.event.FlowableEngineEventType;
 import org.flowable.engine.ProcessEngine;
 import org.flowable.engine.ProcessEngineConfiguration;
 import org.flowable.engine.repository.Deployment;
+import org.flowable.job.api.Job;
 import org.flowable.task.api.Task;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -310,10 +313,56 @@ class EnrichmentControllersIntegrationTest {
       </definitions>
       """;
 
+  private static final String ASYNC_FAIL_DEFAULT_RETRIES_XML =
+      """
+      <?xml version="1.0" encoding="UTF-8"?>
+      <definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                   xmlns:flowable="http://flowable.org/bpmn"
+                   targetNamespace="io.ghiloufi.flowable.rest">
+        <process id="asyncFailDefaultRetries" isExecutable="true">
+          <startEvent id="start"/>
+          <sequenceFlow id="f1" sourceRef="start" targetRef="task"/>
+          <serviceTask id="task" flowable:async="true"
+                       flowable:class="io.ghiloufi.flowable.rest.EnrichmentControllersIntegrationTest$AlwaysFailingDelegate"/>
+          <sequenceFlow id="f2" sourceRef="task" targetRef="end"/>
+          <endEvent id="end"/>
+        </process>
+      </definitions>
+      """;
+
+  private static final String ASYNC_FAIL_CUSTOM_RETRIES_XML =
+      """
+      <?xml version="1.0" encoding="UTF-8"?>
+      <definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                   xmlns:flowable="http://flowable.org/bpmn"
+                   targetNamespace="io.ghiloufi.flowable.rest">
+        <process id="asyncFailCustomRetries" isExecutable="true">
+          <startEvent id="start"/>
+          <sequenceFlow id="f1" sourceRef="start" targetRef="task"/>
+          <serviceTask id="task" flowable:async="true"
+                       flowable:class="io.ghiloufi.flowable.rest.EnrichmentControllersIntegrationTest$AlwaysFailingDelegate">
+            <extensionElements>
+              <flowable:failedJobRetryTimeCycle>R5/PT5M</flowable:failedJobRetryTimeCycle>
+            </extensionElements>
+          </serviceTask>
+          <sequenceFlow id="f2" sourceRef="task" targetRef="end"/>
+          <endEvent id="end"/>
+        </process>
+      </definitions>
+      """;
+
+  public static class AlwaysFailingDelegate implements org.flowable.engine.delegate.JavaDelegate {
+    @Override
+    public void execute(org.flowable.engine.delegate.DelegateExecution execution) {
+      throw new RuntimeException("always fails");
+    }
+  }
+
   private ProcessEngine processEngine;
   private DeploymentEnrichmentController deploymentController;
   private DefinitionEnrichmentController definitionController;
   private InstanceEnrichmentController instanceController;
+  private JobEnrichmentController jobController;
   private JobHealthController jobHealthController;
 
   @BeforeEach
@@ -331,15 +380,19 @@ class EnrichmentControllersIntegrationTest {
         .getProcessEngineConfiguration()
         .getEventDispatcher()
         .addEventListener(
-            new FlowTraceAuditEventListener(auditRepository),
+            new FlowTraceAuditEventListener(auditRepository, processEngine.getRepositoryService()),
             FlowableEngineEventType.VARIABLE_CREATED,
             FlowableEngineEventType.VARIABLE_UPDATED,
             FlowableEngineEventType.VARIABLE_DELETED,
             FlowableEngineEventType.JOB_EXECUTION_SUCCESS,
             FlowableEngineEventType.JOB_EXECUTION_FAILURE,
-            FlowableEngineEventType.SEQUENCEFLOW_TAKEN);
+            FlowableEngineEventType.SEQUENCEFLOW_TAKEN,
+            FlowableEngineEventType.ENTITY_CREATED,
+            FlowableEngineEventType.ENTITY_DELETED,
+            FlowableEngineEventType.PROCESS_STARTED);
 
-    deploymentController = new DeploymentEnrichmentController(processEngine.getRepositoryService());
+    deploymentController =
+        new DeploymentEnrichmentController(processEngine.getRepositoryService(), processEngine);
     definitionController = new DefinitionEnrichmentController(processEngine.getRepositoryService());
     instanceController =
         new InstanceEnrichmentController(
@@ -348,6 +401,13 @@ class EnrichmentControllersIntegrationTest {
             processEngine.getTaskService(),
             processEngine.getHistoryService(),
             processEngine.getManagementService(),
+            processEngine);
+    jobController =
+        new JobEnrichmentController(
+            processEngine.getManagementService(),
+            processEngine.getRepositoryService(),
+            processEngine.getRuntimeService(),
+            processEngine.getHistoryService(),
             processEngine);
     jobHealthController = new JobHealthController(processEngine.getManagementService());
   }
@@ -379,6 +439,78 @@ class EnrichmentControllersIntegrationTest {
     assertThat(dto.definitions().get(0).key()).isEqualTo("orderApproval");
     assertThat(dto.activity()).hasSize(1);
     assertThat(dto.activity().get(0).kind()).isEqualTo("created");
+  }
+
+  @Test
+  void deploymentEnrichmentReportsSupersededWhenANewerDeploymentSharesTheKey() {
+    Deployment first =
+        processEngine
+            .getRepositoryService()
+            .createDeployment()
+            .name("Order Approval Deployment v1")
+            .key("orderApprovalKey")
+            .addString("orderApproval.bpmn20.xml", PROCESS_XML)
+            .deploy();
+
+    processEngine
+        .getRepositoryService()
+        .createDeployment()
+        .name("Order Approval Deployment v2")
+        .key("orderApprovalKey")
+        .addString("orderApproval.bpmn20.xml", PROCESS_XML)
+        .deploy();
+
+    DeploymentDto firstDto = deploymentController.getDeployment(first.getId());
+    assertThat(firstDto.activity())
+        .extracting(DeploymentDto.Activity::kind)
+        .containsExactly("created", "superseded");
+  }
+
+  @Test
+  void deploymentEnrichmentReportsInstanceStartedWhenAProcessInstanceStarts() {
+    Deployment deployment =
+        processEngine
+            .getRepositoryService()
+            .createDeployment()
+            .name("Order Approval Deployment")
+            .addString("orderApproval.bpmn20.xml", PROCESS_XML)
+            .deploy();
+
+    var instance =
+        processEngine
+            .getRuntimeService()
+            .startProcessInstanceByKey("orderApproval", Map.of("approved", true));
+
+    DeploymentDto dto = deploymentController.getDeployment(deployment.getId());
+    assertThat(dto.activity())
+        .extracting(DeploymentDto.Activity::kind)
+        .containsExactly("created", "instance_started");
+    assertThat(dto.activity().get(1).detail()).contains(instance.getId());
+  }
+
+  @Test
+  void deploymentEnrichmentAuditTableRecordsDeleteAttempted() {
+    // The deployment itself is gone after a cascading delete, so this checks the audit table
+    // directly rather than through the (now 404-ing) DeploymentEnrichmentController - matches
+    // the documented caveat that a delete_attempted entry is only visible if read before the
+    // delete completes.
+    Deployment deployment =
+        processEngine
+            .getRepositoryService()
+            .createDeployment()
+            .name("Order Approval Deployment")
+            .addString("orderApproval.bpmn20.xml", PROCESS_XML)
+            .deploy();
+
+    processEngine.getRepositoryService().deleteDeployment(deployment.getId(), true);
+
+    var rows =
+        new JdbcTemplate(processEngine.getProcessEngineConfiguration().getDataSource())
+            .queryForList(
+                "SELECT * FROM FLOWTRACE_DEPLOYMENT_ACTIVITY WHERE DEPLOYMENT_ID = ? AND KIND = ?",
+                deployment.getId(),
+                "delete_attempted");
+    assertThat(rows).hasSize(1);
   }
 
   @Test
@@ -731,6 +863,169 @@ class EnrichmentControllersIntegrationTest {
     assertThat(edgeF3.taken()).isTrue();
     var edgeF4 = findEdge(ended, "f4");
     assertThat(edgeF4.taken()).isFalse();
+  }
+
+  @Test
+  void instanceEnrichmentOmitsTrailEntriesForUnsupportedHistoricActivityTypes() {
+    // Sequence-flow-level HistoricActivityInstance rows (activityType "sequenceFlow") only
+    // appear at Flowable's "full" history level - the shared engine in setUp() doesn't use that
+    // level, so this test builds its own engine to actually reproduce the mislabeling bug this
+    // test guards against (confirmed via a throwaway probe this session: at "full" history,
+    // sequenceFlow rows genuinely appear alongside the supported activity types).
+    ProcessEngine fullHistoryEngine =
+        ProcessEngineConfiguration.createStandaloneInMemProcessEngineConfiguration()
+            .setJdbcUrl("jdbc:h2:mem:flowtrace-fullhistory-" + UUID.randomUUID())
+            .setAsyncExecutorActivate(false)
+            .setHistory("full")
+            .buildProcessEngine();
+    FlowTraceSchemaInitializer.migrate(
+        fullHistoryEngine.getProcessEngineConfiguration().getDataSource());
+    InstanceEnrichmentController fullHistoryInstanceController =
+        new InstanceEnrichmentController(
+            fullHistoryEngine.getRepositoryService(),
+            fullHistoryEngine.getRuntimeService(),
+            fullHistoryEngine.getTaskService(),
+            fullHistoryEngine.getHistoryService(),
+            fullHistoryEngine.getManagementService(),
+            fullHistoryEngine);
+
+    fullHistoryEngine
+        .getRepositoryService()
+        .createDeployment()
+        .name("Order Approval Deployment")
+        .addString("orderApproval.bpmn20.xml", PROCESS_XML)
+        .deploy();
+
+    Map<String, Object> variables = new HashMap<>();
+    variables.put("approved", true);
+    String instanceId =
+        fullHistoryEngine
+            .getRuntimeService()
+            .startProcessInstanceByKey("orderApproval", variables)
+            .getId();
+    Task task =
+        fullHistoryEngine
+            .getTaskService()
+            .createTaskQuery()
+            .processInstanceId(instanceId)
+            .singleResult();
+    fullHistoryEngine.getTaskService().complete(task.getId());
+
+    ProcessInstanceDto ended = fullHistoryInstanceController.getInstance(instanceId);
+
+    // The sequence flows (f1, f2, f3) are real activity ids in this fixture too, so assert on
+    // *type*, not just id, to actually distinguish "the sequence-flow row was omitted" from "an
+    // activity row happens to share that id."
+    assertThat(ended.trail())
+        .extracting(io.ghiloufi.flowable.rest.dto.ProcessInstanceDto.TrailEntry::type)
+        .containsOnly("startEvent", "userTask", "exclusiveGateway", "endEvent");
+    assertThat(ended.trail().stream().map(ProcessInstanceDto.TrailEntry::activityId))
+        .contains("start", "review", "decision", "end");
+  }
+
+  @Test
+  void jobEnrichmentPopulatesLockOwnerAndLockExpiresAtFromNativeJobTables() {
+    processEngine
+        .getRepositoryService()
+        .createDeployment()
+        .addString("asyncFailDefaultRetries.bpmn20.xml", ASYNC_FAIL_DEFAULT_RETRIES_XML)
+        .deploy();
+    processEngine.getRuntimeService().startProcessInstanceByKey("asyncFailDefaultRetries");
+    Job job = processEngine.getManagementService().createJobQuery().singleResult();
+
+    // Simulate a worker having acquired this job - LOCK_OWNER_/LOCK_EXP_TIME_ aren't reachable
+    // via any public Flowable API, only by writing/reading the native ACT_RU_JOB columns
+    // directly, which is exactly what this test is verifying the read side of.
+    // Truncated to millis: java.sql.Timestamp round-trips through H2 at microsecond precision,
+    // so a raw Instant.now() (nanosecond precision) would never compare equal after the read-back.
+    Instant lockExpiry =
+        Instant.now().plusSeconds(300).truncatedTo(java.time.temporal.ChronoUnit.MILLIS);
+    new JdbcTemplate(processEngine.getProcessEngineConfiguration().getDataSource())
+        .update(
+            "UPDATE ACT_RU_JOB SET LOCK_OWNER_ = ?, LOCK_EXP_TIME_ = ? WHERE ID_ = ?",
+            "worker-1",
+            Timestamp.from(lockExpiry),
+            job.getId());
+
+    var dto = jobController.getJob(job.getId());
+    assertThat(dto.lockOwner()).isEqualTo("worker-1");
+    assertThat(dto.lockExpiresAt()).isEqualTo(lockExpiry);
+  }
+
+  @Test
+  void jobEnrichmentReturnsNullLockInfoForDeadLetterJobs() {
+    processEngine
+        .getRepositoryService()
+        .createDeployment()
+        .addString("asyncFailDefaultRetries.bpmn20.xml", ASYNC_FAIL_DEFAULT_RETRIES_XML)
+        .deploy();
+    processEngine.getRuntimeService().startProcessInstanceByKey("asyncFailDefaultRetries");
+    Job job = processEngine.getManagementService().createJobQuery().singleResult();
+
+    processEngine.getManagementService().moveJobToDeadLetterJob(job.getId());
+
+    var dto = jobController.getJob(job.getId());
+    assertThat(dto.type()).isEqualTo("deadletter");
+    assertThat(dto.lockOwner()).isNull();
+    assertThat(dto.lockExpiresAt()).isNull();
+  }
+
+  @Test
+  void jobEnrichmentResolvesConfiguredMaxRetriesFromBpmnModelRatherThanJobState() {
+    processEngine
+        .getRepositoryService()
+        .createDeployment()
+        .addString("asyncFailCustomRetries.bpmn20.xml", ASYNC_FAIL_CUSTOM_RETRIES_XML)
+        .deploy();
+    String instanceId =
+        processEngine
+            .getRuntimeService()
+            .startProcessInstanceByKey("asyncFailCustomRetries")
+            .getId();
+    Job job = processEngine.getManagementService().createJobQuery().singleResult();
+
+    // Before any execution, the job's own retries is Flowable's hardcoded default (3), NOT the
+    // configured 5 - confirmed empirically. maxRetries must come from the BPMN model, not the job.
+    var beforeExecution = jobController.getJob(job.getId());
+    assertThat(beforeExecution.retries()).isEqualTo(3);
+    assertThat(beforeExecution.maxRetries()).isEqualTo(5);
+
+    try {
+      processEngine.getManagementService().executeJob(job.getId());
+    } catch (Exception expected) {
+      // AlwaysFailingDelegate always throws; that's the point of this test.
+    }
+
+    // After the first failure, Flowable reschedules with a decremented retries count derived
+    // from the configured cycle - the job may now live in a different native table (id
+    // stability across that move isn't assumed here), so re-resolve it by instance instead of
+    // trusting the original id still resolves to the same table.
+    Job rescheduled =
+        processEngine
+            .getManagementService()
+            .createTimerJobQuery()
+            .processInstanceId(instanceId)
+            .singleResult();
+    assertThat(rescheduled).as("job should have been rescheduled as a timer job").isNotNull();
+    var afterFailure = jobController.getJob(rescheduled.getId());
+    assertThat(afterFailure.retries()).isEqualTo(4);
+    assertThat(afterFailure.maxRetries())
+        .as("maxRetries reflects the configured ceiling, unaffected by the decrement")
+        .isEqualTo(5);
+  }
+
+  @Test
+  void jobEnrichmentDefaultsMaxRetriesWhenNoRetryCycleIsConfigured() {
+    processEngine
+        .getRepositoryService()
+        .createDeployment()
+        .addString("asyncFailDefaultRetries.bpmn20.xml", ASYNC_FAIL_DEFAULT_RETRIES_XML)
+        .deploy();
+    processEngine.getRuntimeService().startProcessInstanceByKey("asyncFailDefaultRetries");
+    Job job = processEngine.getManagementService().createJobQuery().singleResult();
+
+    var dto = jobController.getJob(job.getId());
+    assertThat(dto.maxRetries()).isEqualTo(3);
   }
 
   @Test

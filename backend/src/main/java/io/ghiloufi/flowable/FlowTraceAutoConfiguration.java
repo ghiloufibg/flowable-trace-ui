@@ -106,7 +106,8 @@ public class FlowTraceAutoConfiguration {
   public FlowTraceAuditEventListener flowTraceAuditEventListener(
       FlowTraceSchemaMigration schemaMigration) {
     AuditRepository auditRepository = new AuditRepository(schemaMigration.dataSource());
-    FlowTraceAuditEventListener listener = new FlowTraceAuditEventListener(auditRepository);
+    FlowTraceAuditEventListener listener =
+        new FlowTraceAuditEventListener(auditRepository, processEngine.getRepositoryService());
     processEngine
         .getProcessEngineConfiguration()
         .getEventDispatcher()
@@ -117,7 +118,10 @@ public class FlowTraceAutoConfiguration {
             FlowableEngineEventType.VARIABLE_DELETED,
             FlowableEngineEventType.JOB_EXECUTION_SUCCESS,
             FlowableEngineEventType.JOB_EXECUTION_FAILURE,
-            FlowableEngineEventType.SEQUENCEFLOW_TAKEN);
+            FlowableEngineEventType.SEQUENCEFLOW_TAKEN,
+            FlowableEngineEventType.ENTITY_CREATED,
+            FlowableEngineEventType.ENTITY_DELETED,
+            FlowableEngineEventType.PROCESS_STARTED);
     return listener;
   }
 
@@ -130,7 +134,7 @@ public class FlowTraceAutoConfiguration {
   @Bean
   public DeploymentEnrichmentController flowTraceDeploymentEnrichmentController(
       RepositoryService repositoryService) {
-    return new DeploymentEnrichmentController(repositoryService);
+    return new DeploymentEnrichmentController(repositoryService, processEngine);
   }
 
   @Bean

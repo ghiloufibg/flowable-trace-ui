@@ -68,4 +68,15 @@ public class AuditRepository {
         sequenceFlowId,
         Timestamp.from(Instant.now()));
   }
+
+  public void recordDeploymentActivity(String deploymentId, String kind, String detail) {
+    jdbcTemplate.update(
+        "INSERT INTO FLOWTRACE_DEPLOYMENT_ACTIVITY "
+            + "(ID, DEPLOYMENT_ID, KIND, DETAIL, OCCURRED_AT) VALUES (?, ?, ?, ?, ?)",
+        UUID.randomUUID().toString(),
+        deploymentId,
+        kind,
+        detail,
+        Timestamp.from(Instant.now()));
+  }
 }

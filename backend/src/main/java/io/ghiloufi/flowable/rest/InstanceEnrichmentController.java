@@ -69,7 +69,10 @@ import org.springframework.web.server.ResponseStatusException;
  * takes a different branch each time - the case the old heuristic could get wrong. Node types are
  * limited to the frontend's supported {@code BpmnNodeType} union; unsupported BPMN element types
  * (sub-process *container* shapes themselves, intermediate events, non-timer boundary events, etc.)
- * are omitted from {@code nodes[]} rather than mislabeled.
+ * are omitted from {@code nodes[]} rather than mislabeled - {@code trail[]} follows the same rule
+ * via {@link #mapActivityType(String)}: a {@link HistoricActivityInstance} row of an unsupported
+ * type (e.g. a sequence-flow-level history entry) is omitted rather than defaulted to a misleading
+ * type like {@code "serviceTask"}.
  *
  * <p>{@code multiInstance} counts are derived from {@link HistoricActivityInstance} rows grouped by
  * activity id (one row per loop iteration) rather than execution-tree traversal - see {@link
@@ -645,22 +648,29 @@ public class InstanceEnrichmentController {
       List<HistoricActivityInstance> historicActivities) {
     return historicActivities.stream()
         .sorted((a, b) -> a.getStartTime().compareTo(b.getStartTime()))
-        .map(
-            hai ->
-                new ProcessInstanceDto.TrailEntry(
-                    hai.getId(),
-                    hai.getActivityId(),
-                    hai.getActivityName() != null ? hai.getActivityName() : hai.getActivityId(),
-                    mapActivityType(hai.getActivityType()),
-                    hai.getStartTime().toInstant(),
-                    hai.getEndTime() != null ? hai.getEndTime().toInstant() : null,
-                    hai.getDurationInMillis()))
+        .map(this::toTrailEntry)
+        .filter(java.util.Objects::nonNull)
         .toList();
+  }
+
+  private ProcessInstanceDto.TrailEntry toTrailEntry(HistoricActivityInstance hai) {
+    String type = mapActivityType(hai.getActivityType());
+    if (type == null) {
+      return null;
+    }
+    return new ProcessInstanceDto.TrailEntry(
+        hai.getId(),
+        hai.getActivityId(),
+        hai.getActivityName() != null ? hai.getActivityName() : hai.getActivityId(),
+        type,
+        hai.getStartTime().toInstant(),
+        hai.getEndTime() != null ? hai.getEndTime().toInstant() : null,
+        hai.getDurationInMillis());
   }
 
   private static String mapActivityType(String flowableActivityType) {
     if (flowableActivityType == null) {
-      return "serviceTask";
+      return null;
     }
     return switch (flowableActivityType) {
       case "startEvent" -> "startEvent";
@@ -672,7 +682,7 @@ public class InstanceEnrichmentController {
       case "parallelGateway" -> "parallelGateway";
       case "callActivity" -> "callActivity";
       case "boundaryTimer" -> "boundaryTimer";
-      default -> "serviceTask";
+      default -> null;
     };
   }
 

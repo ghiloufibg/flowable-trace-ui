@@ -76,6 +76,21 @@ public final class FlowTraceSchemaInitializer {
       "CREATE INDEX IDX_FLOWTRACE_SEQ_FLOW_PROC_INST ON FLOWTRACE_SEQUENCE_FLOW_TAKEN"
           + " (PROCESS_INSTANCE_ID)";
 
+  private static final String CREATE_DEPLOYMENT_ACTIVITY_TABLE =
+      """
+      CREATE TABLE FLOWTRACE_DEPLOYMENT_ACTIVITY (
+          ID VARCHAR(64) NOT NULL,
+          DEPLOYMENT_ID VARCHAR(64) NOT NULL,
+          KIND VARCHAR(20) NOT NULL,
+          DETAIL VARCHAR(500),
+          OCCURRED_AT TIMESTAMP NOT NULL,
+          PRIMARY KEY (ID)
+      )
+      """;
+
+  private static final String CREATE_DEPLOYMENT_ACTIVITY_INDEX =
+      "CREATE INDEX IDX_FLOWTRACE_DEPL_ACT_DEPL ON FLOWTRACE_DEPLOYMENT_ACTIVITY (DEPLOYMENT_ID)";
+
   private FlowTraceSchemaInitializer() {}
 
   public static void migrate(DataSource dataSource) {
@@ -92,6 +107,11 @@ public final class FlowTraceSchemaInitializer {
           "FLOWTRACE_SEQUENCE_FLOW_TAKEN",
           CREATE_SEQUENCE_FLOW_TAKEN_TABLE,
           CREATE_SEQUENCE_FLOW_TAKEN_INDEX);
+      createTableIfMissing(
+          connection,
+          "FLOWTRACE_DEPLOYMENT_ACTIVITY",
+          CREATE_DEPLOYMENT_ACTIVITY_TABLE,
+          CREATE_DEPLOYMENT_ACTIVITY_INDEX);
     } catch (SQLException e) {
       throw new IllegalStateException("Failed to create flow-trace-ui audit tables", e);
     }
