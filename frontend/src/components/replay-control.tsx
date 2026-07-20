@@ -137,6 +137,7 @@ export function ReplayControl({
               onClick={onToggle}
               className="inline-flex h-7 w-7 items-center justify-center rounded bg-teal text-white shadow-sm hover:bg-teal-hover"
               title={replaying ? "Pause" : "Play"}
+              aria-label={replaying ? "Pause" : "Play"}
             >
               {replaying ? (
                 <svg width="10" height="10" viewBox="0 0 10 10"><rect x="1.5" y="1" width="2.5" height="8" fill="currentColor"/><rect x="6" y="1" width="2.5" height="8" fill="currentColor"/></svg>

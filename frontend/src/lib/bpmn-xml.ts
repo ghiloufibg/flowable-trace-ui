@@ -61,9 +61,32 @@ function edgeXml(e: BpmnEdge): string {
 
 function shapeDi(n: BpmnNode): string {
   const d = dims(n);
+  // For events (start/end/boundary) and gateways, bpmn-js renders the name as
+  // an *external* label outside the shape. Without explicit BPMNLabel bounds
+  // it defaults to a narrow ~90px box which wraps two-word names
+  // ("Order placed" → "Order \n placed") straight into the shape above/below.
+  // Provide generous bounds sized to the text so the label sits fully clear
+  // of the icon and never collides with neighbouring nodes.
+  const isSmall =
+    n.type === "startEvent" ||
+    n.type === "endEvent" ||
+    n.type === "boundaryTimer" ||
+    n.type === "exclusiveGateway" ||
+    n.type === "parallelGateway";
+  let labelXml = `<bpmndi:BPMNLabel />`;
+  if (isSmall && n.name) {
+    // ~7.6px per glyph at 12px font (incl. halo stroke); clamp so very long
+    // names wrap on two lines rather than pushing off-canvas.
+    const textW = Math.min(200, Math.max(110, n.name.length * 7.6 + 12));
+    const lw = Math.round(textW);
+    const lh = n.name.length > 24 ? 32 : 18;
+    const lx = Math.round(n.x + d.w / 2 - lw / 2);
+    const ly = Math.round(n.y + d.h + 10);
+    labelXml = `<bpmndi:BPMNLabel><dc:Bounds x="${lx}" y="${ly}" width="${lw}" height="${lh}" /></bpmndi:BPMNLabel>`;
+  }
   return `<bpmndi:BPMNShape id="${n.id}_di" bpmnElement="${n.id}">
       <dc:Bounds x="${n.x}" y="${n.y}" width="${d.w}" height="${d.h}" />
-      <bpmndi:BPMNLabel />
+      ${labelXml}
     </bpmndi:BPMNShape>`;
 }
 

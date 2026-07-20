@@ -4,7 +4,7 @@ import { AppShell } from "@/components/app-shell";
 import { RelTime } from "@/components/rel-time";
 import {
   activeCountForDefinition,
-  listDefinitions,
+  useDefinitions,
   versionCount,
   type ProcessDefinition,
 } from "@/lib/store";
@@ -22,7 +22,7 @@ export const Route = createFileRoute("/definitions/")({
 });
 
 function DefinitionsListPage() {
-  const all = listDefinitions();
+  const all = useDefinitions();
   const [q, setQ] = useState("");
   const [tenant, setTenant] = useState("all");
   const [status, setStatus] = useState<"all" | "active" | "suspended">("all");

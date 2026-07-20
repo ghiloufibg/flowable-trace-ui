@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { RelTime } from "@/components/rel-time";
-import { activeInstanceCount, listDeployments, type Deployment, type DeploymentSource } from "@/lib/store";
+import { activeInstanceCount, useDeployments, type Deployment, type DeploymentSource } from "@/lib/store";
 
 export const Route = createFileRoute("/deployments/")({
   head: () => ({
@@ -18,7 +18,7 @@ export const Route = createFileRoute("/deployments/")({
 });
 
 function DeploymentsListPage() {
-  const all = listDeployments();
+  const all = useDeployments();
   const [q, setQ] = useState("");
   const [tenant, setTenant] = useState<string>("all");
   const [source, setSource] = useState<"all" | DeploymentSource>("all");

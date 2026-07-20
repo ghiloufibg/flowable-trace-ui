@@ -223,14 +223,19 @@
   vector-effect: non-scaling-stroke;
 }
 
-/* External labels (start/end events, edges) sit on the canvas — give them
-   full opacity and strong contrast regardless of the shape's state. */
+/* External labels (start/end events, gateways, edges) sit on the canvas —
+   give them full opacity, strong contrast, and a thick halo so they stay
+   legible even when they graze the edge of an adjacent shape or a grid line. */
 .fc-djs .djs-element.djs-label .djs-visual text,
 .fc-djs .djs-element.djs-label .djs-visual tspan {
   fill: var(--bpmn-label) !important;
   font-size: 11.5px !important;
   font-weight: 500 !important;
   opacity: 1 !important;
+  paint-order: stroke fill;
+  stroke: var(--panel);
+  stroke-width: 4px;
+  stroke-linejoin: round;
 }
 .fc-djs .djs-element.djs-label {
   opacity: 1 !important;

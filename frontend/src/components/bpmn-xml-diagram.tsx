@@ -132,10 +132,64 @@ export function BpmnXmlDiagram({
         // Fit twice: once now, once on next frame after layout settles
         canvas.zoom("fit-viewport");
         requestAnimationFrame(() => canvas.zoom("fit-viewport"));
-        const reg = viewerRef.current!.get<{ getAll: () => Array<{ id: string }> }>(
+        const reg = viewerRef.current!.get<{ getAll: () => Array<{ id: string }>; get: (id: string) => unknown }>(
           "elementRegistry",
         );
-        setNodeIdSet(new Set(reg.getAll().map((e) => e.id)));
+        // bpmn-js Modeler recomputes external-label bounds after import using a
+        // narrow default width, which wraps event/gateway names ("Order placed"
+        // → "Order / placed") straight into the shape above/below. Resize each
+        // external label back to a text-fit width so it always renders on a
+        // single line (or two proportionally sized lines for long names).
+        try {
+          const modeling = viewerRef.current!.get<{
+            resizeShape: (shape: unknown, bounds: Bounds) => void;
+            updateProperties: (el: object, props: Record<string, unknown>) => void;
+          }>("modeling");
+          type LabelShape = {
+            id: string;
+            width: number;
+            height: number;
+            x: number;
+            y: number;
+            labelTarget?: { businessObject?: { name?: string } };
+            businessObject?: { name?: string };
+          };
+          for (const el of reg.getAll() as LabelShape[]) {
+            if (!el.id?.endsWith("_label")) continue;
+            const name =
+              el.labelTarget?.businessObject?.name ??
+              el.businessObject?.name ??
+              "";
+            if (!name) continue;
+            // Character-count heuristic tuned for the 11px Arial bpmn-js uses.
+            const targetW = Math.min(220, Math.max(110, name.length * 7 + 16));
+            const targetH = name.length > 26 ? 34 : 18;
+            const cx = el.x + el.width / 2;
+            const cy = el.y + el.height / 2;
+            modeling.resizeShape(el, {
+              x: Math.round(cx - targetW / 2),
+              y: Math.round(cy - targetH / 2),
+              width: targetW,
+              height: targetH,
+            });
+          }
+          // The resize registers on the command stack — clear so users can't
+          // undo the label fix into the original overlapping layout.
+          const cs = viewerRef.current!.get<{ clear: () => void }>("commandStack");
+          cs.clear();
+          // Force a re-render so bpmn-js re-wraps text at the new width by
+          // re-setting the name property (triggers TextRenderer re-layout).
+          try {
+            for (const el of reg.getAll() as Array<{ id: string; labelTarget?: { businessObject?: { name?: string } } }>) {
+              if (!el.id?.endsWith("_label")) continue;
+              const name = el.labelTarget?.businessObject?.name;
+              if (name) modeling.updateProperties(el.labelTarget as unknown as object, { name });
+            }
+          } catch { /* updateProperties unavailable */ }
+          // Clear again after re-render to keep undo stack clean.
+          try { viewerRef.current!.get<{ clear: () => void }>("commandStack").clear(); } catch { /* noop */ }
+        } catch { /* older bpmn-js or missing service — safe to skip */ }
+        setNodeIdSet(new Set((reg.getAll() as Array<{ id: string }>).map((e) => e.id)));
         if (res.warnings.length > 0) {
           setWarning(`${res.warnings.length} import warning(s)`);
         }
@@ -433,9 +487,11 @@ export function BpmnXmlDiagram({
       </div>
 
       {/* Align / distribute toolbar — appears with 2+ selected shapes.
-          Shift-click nodes on the canvas to build a multi-selection. */}
+           Shift-click nodes on the canvas to build a multi-selection.
+           Placed at the right edge below the zoom controls so it never
+           overlaps the "Load XML…" control in the top-left corner. */}
       {multiSelCount >= 2 && (
-        <div className="absolute left-1/2 top-3 z-20 flex -translate-x-1/2 items-center gap-1 rounded-md border border-border bg-panel/95 p-1 text-xs shadow-lg backdrop-blur">
+        <div className="absolute right-3 top-14 z-20 flex items-center gap-1 rounded-md border border-border bg-panel/95 p-1 text-xs shadow-lg backdrop-blur">
           <span className="px-2 text-muted-foreground">{multiSelCount} selected</span>
           <div className="mx-1 h-4 w-px bg-border" />
           <span className="px-1 text-[10px] uppercase tracking-wide text-muted-foreground">Align</span>

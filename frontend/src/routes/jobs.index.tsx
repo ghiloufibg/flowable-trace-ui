@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { RelTime } from "@/components/rel-time";
-import { jobHealth, listJobs, type EngineJob, type JobKind } from "@/lib/store";
+import { jobHealth, useJobs, type EngineJob, type JobKind } from "@/lib/store";
 
 export const Route = createFileRoute("/jobs/")({
   head: () => ({
@@ -19,7 +19,7 @@ export const Route = createFileRoute("/jobs/")({
 type SortKey = "due" | "age" | "retries";
 
 function JobsListPage() {
-  const all = listJobs();
+  const all = useJobs();
   const health = jobHealth();
   const [q, setQ] = useState("");
   const [type, setType] = useState<"all" | JobKind>("all");
