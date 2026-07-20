@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+#
+# Enforces project policies for this repo (see CLAUDE.md):
+#   1. No AI-assistant or external-tool attribution/mentions in commit messages.
+#   2. Baseline commit-message hygiene (Chris Beams' seven rules, lightly enforced).
+#   3. Body capped at 3 lines - small, focused commit descriptions only.
+#
+# This is a commit-msg hook, not pre-commit: both checks are about the message
+# content, which pre-commit never sees (it only runs on staged file contents).
+#
+# One-time setup per clone:
+#   git config core.hooksPath .githooks
+
+set -euo pipefail
+
+MSG_FILE="$1"
+# Strip comment lines (git leaves these in for commit-msg, e.g. from an
+# interactive editor session) before checking anything.
+MSG="$(grep -Ev '^#' "$MSG_FILE" || true)"
+SUBJECT="$(printf '%s\n' "$MSG" | sed -n '1p')"
+
+fail() {
+  echo "commit-msg hook: $1" >&2
+  echo "commit-msg hook: to bypass in a real emergency, use 'git commit --no-verify' -" \
+       "but fix the message instead if you can." >&2
+  exit 1
+}
+
+# --- 1. No AI-assistant mentions --------------------------------------------
+# Strip legitimate references to this repo's own CLAUDE.md file first, so citing it (as this
+# very hook's setup instructions do) doesn't false-positive on the bare word "claude" below.
+MSG_FOR_AI_CHECK="$(printf '%s\n' "$MSG" | sed -E 's/\bclaude\.md\b//gi')"
+AI_PATTERN='\b(claude([- ]?(code|session))?|chatgpt|copilot|openai|anthropic|gpt-?[0-9o]|gemini|ai[- ]assistant|lovable)\b|co-authored-by:.*\b(claude|chatgpt|copilot|openai|anthropic|lovable)\b|generated (with|by) (ai|claude|chatgpt|copilot|lovable)'
+if printf '%s\n' "$MSG_FOR_AI_CHECK" | grep -Eqi "$AI_PATTERN"; then
+  fail "message must not mention an AI assistant or external tool. Remove the mention and try again."
+fi
+
+# --- 2. Commit message best practices ---------------------------------------
+[ -n "$SUBJECT" ] || fail "subject line is empty."
+
+SUBJECT_LEN=${#SUBJECT}
+[ "$SUBJECT_LEN" -le 72 ] || fail "subject line is $SUBJECT_LEN chars, keep it to 72 or fewer."
+
+case "$SUBJECT" in
+  *.) fail "subject line should not end with a period." ;;
+esac
+
+case "$SUBJECT" in
+  [A-Z]*) ;;
+  *) fail "subject line should start with a capital letter." ;;
+esac
+
+LOWER_SUBJECT="$(printf '%s' "$SUBJECT" | tr '[:upper:]' '[:lower:]')"
+case "$LOWER_SUBJECT" in
+  fix|update|updates|changes|wip|misc|stuff|test)
+    fail "subject line '$SUBJECT' is too vague - describe what changed and why." ;;
+esac
+
+LINE_COUNT=$(printf '%s\n' "$MSG" | wc -l)
+if [ "$LINE_COUNT" -gt 1 ]; then
+  SECOND_LINE="$(printf '%s\n' "$MSG" | sed -n '2p')"
+  [ -z "$SECOND_LINE" ] || fail "leave a blank line between the subject and the body."
+fi
+
+# --- 3. Body capped at 3 lines -----------------------------------------------
+BODY_LINE_COUNT=$(printf '%s\n' "$MSG" | sed -n '3,$p' | grep -c '.' || true)
+[ "$BODY_LINE_COUNT" -le 3 ] || fail "body is $BODY_LINE_COUNT lines, keep it to 3 or fewer."
+
+exit 0

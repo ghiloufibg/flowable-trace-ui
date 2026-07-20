@@ -106,6 +106,12 @@ Builds the frontend, embeds it into the backend jar, and runs the full backend t
 [Spotless](https://github.com/diffplug/spotless) (Google Java Format), checked on every
 `verify`. CI runs the same command on every push and pull request to `main`.
 
+One-time setup per clone, to enable this repo's commit-message hook (see `CLAUDE.md`):
+
+```bash
+git config core.hooksPath .githooks
+```
+
 ## Contributing
 
 Frontend UI components (`frontend/src/components/`, route components) are maintained through a
