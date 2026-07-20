@@ -67,3 +67,15 @@ off the existing engine rather than adding new `flowtrace.datasource.*` properti
 trail via `FlowableEventDispatcher`, not `ProcessEngineConfigurator`; Google Java Format via
 Spotless). If an implementation detail contradicts a locked-in decision, flag it and confirm
 with the user rather than silently deviating.
+
+## Working documentation goes in claudedocs/
+
+Continue writing design docs (`design-<slug>.md`), QA reports
+(`qa-report-YYYY-MM-DD-<slug>.md`), and similar working documentation into `claudedocs/`,
+following the conventions already established there. When a design doc's proposal ships,
+update its status inline (e.g. "Design only — not yet implemented" → "**Implemented.**")
+instead of leaving it stale or deleting the rationale.
+
+`claudedocs/` is gitignored — new files created there are local working documentation only,
+not tracked, committed, or pushed. Files already committed before this rule was added remain
+tracked in git history; gitignore doesn't retroactively untrack them.

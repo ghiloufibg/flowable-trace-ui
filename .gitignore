@@ -39,3 +39,7 @@ frontend/test-results/
 frontend/playwright-report/
 frontend/blob-report/
 frontend/playwright/.cache/
+
+# Claude Code working documentation (see CLAUDE.md) - local only, not tracked going forward.
+# Files already committed before this line was added stay tracked.
+claudedocs/
