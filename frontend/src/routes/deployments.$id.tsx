@@ -2,7 +2,7 @@ import { createFileRoute, Link, notFound, useRouter } from "@tanstack/react-rout
 import { useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { RelTime } from "@/components/rel-time";
-import { activeInstanceCount, formatBytes, getDeployment, instancesForDefinition, type Deployment, type DeploymentResource } from "@/lib/store";
+import { activeCountForDefinition, activeInstanceCount, formatBytes, getDeployment, type Deployment, type DeploymentResource } from "@/lib/store";
 
 export const Route = createFileRoute("/deployments/$id")({
   loader: ({ params }) => {
@@ -146,7 +146,10 @@ function DefinitionsTab({ dep }: { dep: Deployment }) {
         <div className="text-right">Instances</div>
       </div>
       {dep.definitions.map((d, i) => {
-        const count = instancesForDefinition(d.key, d.version).length;
+        // Active-only, matching the page header's "N active instances" figure - previously this
+        // counted all instances (active + ended), which summed to a different total than the
+        // header and read as a data bug even though both numbers were individually correct.
+        const count = activeCountForDefinition(d.key, d.version);
         return (
           <div
             key={d.id}

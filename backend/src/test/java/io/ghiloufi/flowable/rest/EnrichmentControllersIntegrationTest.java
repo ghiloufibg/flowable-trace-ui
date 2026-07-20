@@ -439,6 +439,25 @@ class EnrichmentControllersIntegrationTest {
     assertThat(dto.definitions().get(0).key()).isEqualTo("orderApproval");
     assertThat(dto.activity()).hasSize(1);
     assertThat(dto.activity().get(0).kind()).isEqualTo("created");
+    assertThat(dto.deployedBy()).isEmpty();
+  }
+
+  @Test
+  void deploymentAndDefinitionEnrichmentSurfaceDeployedByWhenCategoryIsSetAsTheOptInConvention() {
+    Deployment deployment =
+        processEngine
+            .getRepositoryService()
+            .createDeployment()
+            .name("Order Approval Deployment")
+            .category("alice")
+            .addString("orderApproval.bpmn20.xml", PROCESS_XML)
+            .deploy();
+
+    DeploymentDto deploymentDto = deploymentController.getDeployment(deployment.getId());
+    assertThat(deploymentDto.deployedBy()).isEqualTo("alice");
+
+    ProcessDefinitionDto definitionDto = definitionController.getDefinition("orderApproval", 1);
+    assertThat(definitionDto.deployedBy()).isEqualTo("alice");
   }
 
   @Test
@@ -544,6 +563,7 @@ class EnrichmentControllersIntegrationTest {
     assertThat(dto.isExecutable()).isTrue();
     assertThat(dto.hasStartForm()).isFalse();
     assertThat(dto.deploymentName()).isNotNull();
+    assertThat(dto.deployedBy()).isEmpty();
   }
 
   @Test

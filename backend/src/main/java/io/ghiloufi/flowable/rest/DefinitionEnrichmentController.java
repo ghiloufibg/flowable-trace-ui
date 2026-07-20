@@ -19,8 +19,11 @@ import org.springframework.web.server.ResponseStatusException;
  *
  * <p>{@code isExecutable} isn't on Flowable's deployed ProcessDefinition entity (it's a property of
  * the BPMN {@code <process>} element itself), so it's read from the parsed BpmnModel instead.
- * {@code deployedBy} has no native Flowable equivalent (same gap as DeploymentEnrichmentController)
- * and is returned as an empty string rather than fabricated.
+ * {@code deployedBy} reads the owning *deployment's* {@code getCategory()} (not this definition's
+ * own {@code category}, used separately below for the {@code category} field) - same opt-in
+ * convention as {@code DeploymentEnrichmentController}: empty unless the consuming application sets
+ * it when deploying. See that class's Javadoc and claudedocs/design-deployed-by.md for the full
+ * rationale.
  */
 @RestController
 @RequestMapping("/custom/definitions")
@@ -65,7 +68,7 @@ public class DefinitionEnrichmentController {
         definition.getDeploymentId(),
         deployment != null ? deployment.getName() : null,
         deployment != null ? deployment.getDeploymentTime().toInstant() : null,
-        "",
+        deployment != null && deployment.getCategory() != null ? deployment.getCategory() : "",
         definition.isSuspended(),
         process != null && process.isExecutable(),
         definition.hasStartFormKey(),

@@ -21,11 +21,16 @@ import org.springframework.web.server.ResponseStatusException;
 /**
  * Backs {@code GET custom/deployments/{id}} - see claudedocs/backend-library-design.md §7.2.
  *
- * <p>{@code deployedBy} is always returned as an empty string - investigated and confirmed this has
- * no fix: Flowable has no deployer-identity field anywhere in its data model (neither the public
- * {@code Deployment}/{@code EngineDeployment} API nor the native {@code ACT_RE_DEPLOYMENT} schema),
- * and this library only observes an already-running engine after the fact, so there is no point at
- * which this identity is ever available to capture. See claudedocs/design-deployed-by.md.
+ * <p>{@code deployedBy} reads {@code deployment.getCategory()} - a free-text field Flowable itself
+ * never populates or interprets, repurposed here as an opt-in convention: a consuming application
+ * that calls {@code .category(userId)} when deploying will see that value surfaced here; one that
+ * doesn't sets nothing and this stays an empty string, exactly as before this convention existed.
+ * This is NOT automatic deployer tracking - Flowable has no native field for that anywhere in its
+ * data model (neither the public {@code Deployment}/{@code EngineDeployment} API nor the native
+ * {@code ACT_RE_DEPLOYMENT} schema), and this library only observes an already-running engine after
+ * the fact, so it can never capture deployer identity on its own. See
+ * claudedocs/design-deployed-by.md for the full investigation and why this convention is the only
+ * viable path.
  *
  * <p>{@code version} (Flowable versions process definitions, not deployments) is the max {@code
  * pd.getVersion()} among the process definitions this deployment contains - see {@link
@@ -112,7 +117,7 @@ public class DeploymentEnrichmentController {
         deployment.getTenantId(),
         "api",
         deployment.getDeploymentTime().toInstant(),
-        "",
+        deployment.getCategory() != null ? deployment.getCategory() : "",
         resources,
         definitions,
         activity);
