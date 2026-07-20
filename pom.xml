@@ -11,6 +11,15 @@
 
   <name>Flow Trace UI</name>
   <description>Flowable BPM trace/monitoring UI, packaged as a Spring Boot auto-configuration library plus its frontend.</description>
+  <url>https://github.com/ghiloufibg/flowable-trace-ui</url>
+
+  <licenses>
+    <license>
+      <name>MIT License</name>
+      <url>https://github.com/ghiloufibg/flowable-trace-ui/blob/main/LICENSE</url>
+      <distribution>repo</distribution>
+    </license>
+  </licenses>
 
   <modules>
     <module>frontend</module>

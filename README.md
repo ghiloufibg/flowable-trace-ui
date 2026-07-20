@@ -1,9 +1,30 @@
 # Flow Trace UI
 
+[![CI](https://github.com/ghiloufibg/flowable-trace-ui/actions/workflows/ci.yml/badge.svg)](https://github.com/ghiloufibg/flowable-trace-ui/actions/workflows/ci.yml)
+![Java](https://img.shields.io/badge/Java-21-orange)
+![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.4-brightgreen)
+![Flowable](https://img.shields.io/badge/Flowable-7.1-blue)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 A Spring Boot auto-configuration library that adds a Flowable BPM trace/monitoring UI to an
 existing Spring Boot application, backed by that application's own `ProcessEngine`. Add the
 dependency, and the UI and its supporting REST endpoints appear — no new engine, no new
 database configuration.
+
+## Features
+
+- Live BPMN diagram of a process instance, with per-node/edge state, gateway decisions, and
+  multi-instance progress
+- Token replay controls and a full activity trail per instance
+- Variable history with before/after values, not just current state
+- Job inspection across timer, async, and dead-letter queues, with exception stack traces and
+  retry history
+- Deployment and process-definition browsing, including version history and a per-deployment
+  activity log
+- Zero new infrastructure: reuses the consuming application's existing `ProcessEngine` and
+  database — no separate engine, no new datasource config
+
+## Modules
 
 This repository is a Maven multi-module project:
 
@@ -74,15 +95,35 @@ flowtrace:
 Response shapes match the frontend's domain types field-for-field; see
 `backend/src/main/java/io/ghiloufi/flowable/rest/dto/`.
 
+## Development
+
+```bash
+mvn verify
+```
+
+Builds the frontend, embeds it into the backend jar, and runs the full backend test suite
+(unit + Spring context tests, no external services required). Code style is enforced via
+[Spotless](https://github.com/diffplug/spotless) (Google Java Format), checked on every
+`verify`. CI runs the same command on every push and pull request to `main`.
+
+## Contributing
+
+Frontend UI components (`frontend/src/components/`, route components) are maintained through a
+separate design workflow and aren't accepted as direct PRs — open an issue to discuss UI changes
+first. Everything else — the backend module, the frontend's data-access layer, and
+documentation — is open to PRs.
+
 ## Further reading
 
 - `claudedocs/backend-library-design.md` — architecture and design decisions, including the
   rationale behind each item in the requirements and configuration sections above.
 - `claudedocs/known-limitations.md` — deliberate scope cuts, tracked as backlog.
-- `CLAUDE.md` — contribution rules for this repository (which parts of the codebase are owned by
-  which workflow).
 
 ## Status
 
 Pre-1.0 (`0.1.0-SNAPSHOT`). Functional and covered by unit, integration, and live end-to-end
 testing (see `claudedocs/qa-report-*.md`), but the API surface is not yet considered stable.
+
+## License
+
+[MIT](LICENSE)
