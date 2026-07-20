@@ -443,12 +443,16 @@ class EnrichmentControllersIntegrationTest {
 
   @Test
   void deploymentEnrichmentReportsSupersededWhenANewerDeploymentSharesTheKey() {
+    // Deliberately NOT calling .key(...) on either DeploymentBuilder - confirmed live against a
+    // real engine that Deployment.getKey() is null for essentially every real deployment (neither
+    // Spring Boot auto-deployment nor a plain REST upload ever sets it). The process DEFINITION
+    // key ("orderApproval", from PROCESS_XML's <process id="orderApproval">) is what actually
+    // drives Flowable's native versioning and this fix's superseded/version logic.
     Deployment first =
         processEngine
             .getRepositoryService()
             .createDeployment()
             .name("Order Approval Deployment v1")
-            .key("orderApprovalKey")
             .addString("orderApproval.bpmn20.xml", PROCESS_XML)
             .deploy();
 
@@ -456,7 +460,6 @@ class EnrichmentControllersIntegrationTest {
         .getRepositoryService()
         .createDeployment()
         .name("Order Approval Deployment v2")
-        .key("orderApprovalKey")
         .addString("orderApproval.bpmn20.xml", PROCESS_XML)
         .deploy();
 
@@ -464,6 +467,18 @@ class EnrichmentControllersIntegrationTest {
     assertThat(firstDto.activity())
         .extracting(DeploymentDto.Activity::kind)
         .containsExactly("created", "superseded");
+    assertThat(firstDto.version()).isEqualTo(1);
+
+    var secondProcessDefinition =
+        processEngine
+            .getRepositoryService()
+            .createProcessDefinitionQuery()
+            .processDefinitionKey("orderApproval")
+            .latestVersion()
+            .singleResult();
+    DeploymentDto secondDto =
+        deploymentController.getDeployment(secondProcessDefinition.getDeploymentId());
+    assertThat(secondDto.version()).isEqualTo(2);
   }
 
   @Test

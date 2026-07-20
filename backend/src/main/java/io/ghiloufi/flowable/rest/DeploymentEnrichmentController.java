@@ -9,6 +9,7 @@ import java.util.stream.Stream;
 import org.flowable.engine.ProcessEngine;
 import org.flowable.engine.RepositoryService;
 import org.flowable.engine.repository.Deployment;
+import org.flowable.engine.repository.ProcessDefinition;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -26,9 +27,13 @@ import org.springframework.web.server.ResponseStatusException;
  * and this library only observes an already-running engine after the fact, so there is no point at
  * which this identity is ever available to capture. See claudedocs/design-deployed-by.md.
  *
- * <p>{@code version} (Flowable versions process definitions, not deployments) is computed as a
- * 1-based ordinal among deployments sharing the same key, ordered by deployment time - the natural
- * analogue of how Flowable computes process-definition versioning internally.
+ * <p>{@code version} (Flowable versions process definitions, not deployments) is the max {@code
+ * pd.getVersion()} among the process definitions this deployment contains - see {@link
+ * #computeDeploymentVersion(List)}. Deliberately NOT based on {@code Deployment.getKey()}: verified
+ * live against a real engine that field is null for essentially every real deployment (neither
+ * Spring Boot auto-deployment nor a plain REST resource upload ever sets it), so a
+ * deployment-key-based computation always silently returns {@code 1}. Process-definition version is
+ * reliable because Flowable computes and maintains it natively, independent of deployment key.
  *
  * <p>{@code activity[]}'s "created" entry is always synthesized inline from {@code
  * deployment.getDeploymentTime()} (zero ordering risk, always available). The
@@ -73,12 +78,11 @@ public class DeploymentEnrichmentController {
             .map(name -> toResource(deployment.getId(), name))
             .toList();
 
+    List<ProcessDefinition> processDefinitions =
+        repositoryService.createProcessDefinitionQuery().deploymentId(deployment.getId()).list();
+
     List<DeploymentDto.Definition> definitions =
-        repositoryService
-            .createProcessDefinitionQuery()
-            .deploymentId(deployment.getId())
-            .list()
-            .stream()
+        processDefinitions.stream()
             .map(
                 pd ->
                     new DeploymentDto.Definition(
@@ -104,7 +108,7 @@ public class DeploymentEnrichmentController {
         deployment.getId(),
         deployment.getName(),
         deployment.getKey(),
-        computeDeploymentVersion(deployment),
+        computeDeploymentVersion(processDefinitions),
         deployment.getTenantId(),
         "api",
         deployment.getDeploymentTime().toInstant(),
@@ -169,24 +173,14 @@ public class DeploymentEnrichmentController {
         deploymentId);
   }
 
-  private int computeDeploymentVersion(Deployment deployment) {
-    if (deployment.getKey() == null) {
-      return 1;
-    }
-    List<Deployment> sameKey =
-        repositoryService
-            .createDeploymentQuery()
-            .deploymentKey(deployment.getKey())
-            .orderByDeploymentTime()
-            .asc()
-            .list();
-    int version = 1;
-    for (Deployment candidate : sameKey) {
-      if (candidate.getId().equals(deployment.getId())) {
-        return version;
-      }
-      version++;
-    }
-    return version;
+  /**
+   * Max version among the deployment's own process definitions - a deployment containing more than
+   * one process definition (not observed in practice, but not disallowed by Flowable) is a
+   * documented simplification, not a silent assumption: {@code DeploymentDto.version} is a single
+   * {@code int}, so the most conservative single answer to "has any part of this deployment's
+   * content been redeployed" is used rather than picking one definition arbitrarily.
+   */
+  private static int computeDeploymentVersion(List<ProcessDefinition> processDefinitions) {
+    return processDefinitions.stream().mapToInt(ProcessDefinition::getVersion).max().orElse(1);
   }
 }

@@ -1,6 +1,5 @@
 package io.ghiloufi.flowable.audit;
 
-import java.util.List;
 import org.flowable.common.engine.api.delegate.event.FlowableEngineEventType;
 import org.flowable.common.engine.api.delegate.event.FlowableEntityEvent;
 import org.flowable.common.engine.api.delegate.event.FlowableEvent;
@@ -11,6 +10,7 @@ import org.flowable.engine.RepositoryService;
 import org.flowable.engine.delegate.event.FlowableProcessStartedEvent;
 import org.flowable.engine.delegate.event.FlowableSequenceFlowTakenEvent;
 import org.flowable.engine.repository.Deployment;
+import org.flowable.engine.repository.ProcessDefinition;
 import org.flowable.engine.runtime.ProcessInstance;
 import org.flowable.job.api.Job;
 import org.flowable.variable.api.event.FlowableVariableEvent;
@@ -27,11 +27,17 @@ import org.flowable.variable.api.event.FlowableVariableEvent;
  * <p>{@code instance_started} deployment activity reads {@code getDeploymentId()} directly off the
  * {@link ProcessInstance} entity on {@code FlowableProcessStartedEvent} (the event itself carries
  * no process/deployment id - it only extends {@code FlowableEntityEvent}, not {@code
- * FlowableEngineEvent}) - see {@link #recordInstanceStarted(FlowableProcessStartedEvent)}. {@code
- * superseded} has no dedicated Flowable event at all and is synthesized via a {@link
- * RepositoryService} query, checking whether an earlier deployment with the same key already
- * existed at the moment a new one is created - see {@link
- * #recordSupersededIfApplicable(Deployment)}.
+ * FlowableEngineEvent}) - see {@link #recordInstanceStarted(FlowableProcessStartedEvent)}.
+ *
+ * <p>{@code superseded} has no dedicated Flowable event at all and is synthesized on {@link
+ * ProcessDefinition} {@code ENTITY_CREATED} (not {@link Deployment} {@code ENTITY_CREATED} - a
+ * deployment's own key is null for essentially every real deployment, confirmed live; process
+ * definition *version*, in contrast, is computed correctly and natively by Flowable regardless of
+ * deployment key) - see {@link #recordSupersededIfApplicable(ProcessDefinition)}. This also avoids
+ * a flush-timing hazard the deployment-keyed version had: within one deploy command, {@code
+ * Deployment} {@code ENTITY_CREATED} fires before {@code ProcessDefinition} {@code ENTITY_CREATED}
+ * (confirmed empirically), so listening on the definition instead means its own {@code
+ * getVersion()}/{@code getDeploymentId()} are already fully resolved by the time this fires.
  */
 public class FlowTraceAuditEventListener implements FlowableEventListener {
 
@@ -50,8 +56,8 @@ public class FlowTraceAuditEventListener implements FlowableEventListener {
       recordVariableEvent(variableEvent);
     } else if (event.getType() == FlowableEngineEventType.ENTITY_CREATED
         && event instanceof FlowableEntityEvent entityEvent
-        && entityEvent.getEntity() instanceof Deployment deployment) {
-      recordSupersededIfApplicable(deployment);
+        && entityEvent.getEntity() instanceof ProcessDefinition newDefinition) {
+      recordSupersededIfApplicable(newDefinition);
     } else if (event.getType() == FlowableEngineEventType.ENTITY_DELETED
         && event instanceof FlowableEntityEvent entityEvent
         && entityEvent.getEntity() instanceof Deployment deployment) {
@@ -139,36 +145,31 @@ public class FlowTraceAuditEventListener implements FlowableEventListener {
   }
 
   /**
-   * No Flowable event exists for "this deployment was just superseded" - synthesized here by
-   * checking, at the moment a new deployment is created, whether an earlier deployment with the
-   * same key already existed. If so, the "superseded" entry is recorded for the earlier
-   * deployment's own activity log, not the new one's.
-   *
-   * <p>Deliberately does NOT assume {@code newDeployment} itself is already visible in this query's
-   * results (confirmed empirically that whether it is depends on flush timing within the deploy
-   * command's own transaction) - instead finds the most recent *other* deployment sharing the key,
-   * whether or not the new one shows up alongside it.
+   * No Flowable event exists for "this deployment was just superseded" - synthesized here from
+   * {@code newDefinition.getVersion() > 1}, which Flowable already computes correctly and natively
+   * per process-definition key (unlike deployment key, which is null for essentially every real
+   * deployment - see class Javadoc). If so, the specific prior version of this same key is looked
+   * up to find which *deployment* it belonged to, and the "superseded" entry is recorded there, not
+   * on the new deployment.
    */
-  private void recordSupersededIfApplicable(Deployment newDeployment) {
-    if (newDeployment.getKey() == null) {
-      return;
+  private void recordSupersededIfApplicable(ProcessDefinition newDefinition) {
+    if (newDefinition.getVersion() <= 1) {
+      return; // first-ever deployment of this key - nothing to supersede.
     }
-    List<Deployment> sameKey =
+    ProcessDefinition previous =
         repositoryService
-            .createDeploymentQuery()
-            .deploymentKey(newDeployment.getKey())
-            .orderByDeploymentTime()
-            .desc()
-            .list();
-    sameKey.stream()
-        .filter(candidate -> !candidate.getId().equals(newDeployment.getId()))
-        .findFirst()
-        .ifPresent(
-            previous ->
-                auditRepository.recordDeploymentActivity(
-                    previous.getId(),
-                    "superseded",
-                    "Superseded by deployment " + newDeployment.getId()));
+            .createProcessDefinitionQuery()
+            .processDefinitionKey(newDefinition.getKey())
+            .processDefinitionVersion(newDefinition.getVersion() - 1)
+            .processDefinitionTenantId(newDefinition.getTenantId())
+            .singleResult();
+    if (previous == null) {
+      return; // tolerate a gap (e.g. the prior version was since deleted) rather than NPE.
+    }
+    auditRepository.recordDeploymentActivity(
+        previous.getDeploymentId(),
+        "superseded",
+        "Superseded by deployment " + newDefinition.getDeploymentId());
   }
 
   private void recordInstanceStarted(FlowableProcessStartedEvent event) {
