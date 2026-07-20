@@ -24,6 +24,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.event.ContextRefreshedEvent;
 import org.springframework.context.event.EventListener;
@@ -93,6 +94,23 @@ public class FlowTraceAutoConfiguration {
     DataSource dataSource = processEngine.getProcessEngineConfiguration().getDataSource();
     FlowTraceSchemaInitializer.migrate(dataSource);
     return new FlowTraceSchemaMigration(dataSource);
+  }
+
+  /**
+   * Only registered when {@code flowtrace.default-page-size} is explicitly set - see {@link
+   * FlowableDefaultPageSizeFilter} and {@link FlowTraceProperties#getDefaultPageSize()}. Absent
+   * property means this bean is never created, so Flowable's own hardcoded default (10) governs
+   * {@code /process-api/**} list endpoints exactly as it always has - this is purely additive.
+   */
+  @Bean
+  @ConditionalOnProperty(prefix = "flowtrace", name = "default-page-size")
+  public FilterRegistrationBean<FlowableDefaultPageSizeFilter> flowTraceDefaultPageSizeFilter() {
+    FilterRegistrationBean<FlowableDefaultPageSizeFilter> registration =
+        new FilterRegistrationBean<>(
+            new FlowableDefaultPageSizeFilter(properties.getDefaultPageSize()));
+    registration.addUrlPatterns("/process-api/*");
+    registration.setName("flowTraceDefaultPageSizeFilter");
+    return registration;
   }
 
   /**

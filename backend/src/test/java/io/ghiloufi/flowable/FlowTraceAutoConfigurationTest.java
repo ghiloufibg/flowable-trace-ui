@@ -86,4 +86,45 @@ class FlowTraceAutoConfigurationTest {
         .withPropertyValues("flowtrace.enabled=false")
         .run(context -> assertThat(context).doesNotHaveBean(FlowTraceAutoConfiguration.class));
   }
+
+  @Test
+  void doesNotRegisterTheDefaultPageSizeFilterWhenThePropertyIsUnset() {
+    ProcessEngine testProcessEngine = buildTestProcessEngine();
+
+    contextRunner
+        .withBean(ProcessEngine.class, () -> testProcessEngine)
+        .withBean(RepositoryService.class, testProcessEngine::getRepositoryService)
+        .withBean(RuntimeService.class, testProcessEngine::getRuntimeService)
+        .withBean(TaskService.class, testProcessEngine::getTaskService)
+        .withBean(HistoryService.class, testProcessEngine::getHistoryService)
+        .withBean(ManagementService.class, testProcessEngine::getManagementService)
+        .run(
+            context ->
+                assertThat(context)
+                    .doesNotHaveBean(
+                        org.springframework.boot.web.servlet.FilterRegistrationBean.class));
+  }
+
+  @Test
+  void registersTheDefaultPageSizeFilterWhenThePropertyIsSet() {
+    ProcessEngine testProcessEngine = buildTestProcessEngine();
+
+    contextRunner
+        .withBean(ProcessEngine.class, () -> testProcessEngine)
+        .withBean(RepositoryService.class, testProcessEngine::getRepositoryService)
+        .withBean(RuntimeService.class, testProcessEngine::getRuntimeService)
+        .withBean(TaskService.class, testProcessEngine::getTaskService)
+        .withBean(HistoryService.class, testProcessEngine::getHistoryService)
+        .withBean(ManagementService.class, testProcessEngine::getManagementService)
+        .withPropertyValues("flowtrace.default-page-size=500")
+        .run(
+            context -> {
+              assertThat(context)
+                  .hasSingleBean(org.springframework.boot.web.servlet.FilterRegistrationBean.class);
+              var registration =
+                  context.getBean(
+                      org.springframework.boot.web.servlet.FilterRegistrationBean.class);
+              assertThat(registration.getUrlPatterns()).containsExactly("/process-api/*");
+            });
+  }
 }
