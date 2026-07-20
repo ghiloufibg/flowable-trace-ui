@@ -24,6 +24,7 @@
   <modules>
     <module>frontend</module>
     <module>backend</module>
+    <module>e2e-fixture</module>
   </modules>
 
   <properties>

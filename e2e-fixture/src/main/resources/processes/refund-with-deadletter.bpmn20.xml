@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+             xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+             xmlns:omgdc="http://www.omg.org/spec/DD/20100524/DC"
+             xmlns:omgdi="http://www.omg.org/spec/DD/20100524/DI"
+             xmlns:flowable="http://flowable.org/bpmn"
+             targetNamespace="io.ghiloufi.flowable.e2efixture">
+  <process id="refundWithDeadletter" name="Refund (deliberately failing)" isExecutable="true">
+    <startEvent id="start" name="Start"/>
+    <sequenceFlow id="f1" sourceRef="start" targetRef="issueRefund"/>
+    <serviceTask id="issueRefund" name="Issue Refund" flowable:async="true"
+                 flowable:class="io.ghiloufi.flowable.e2efixture.AlwaysFailingDelegate">
+      <extensionElements>
+        <flowable:failedJobRetryTimeCycle>R1/PT1S</flowable:failedJobRetryTimeCycle>
+      </extensionElements>
+    </serviceTask>
+    <sequenceFlow id="f2" sourceRef="issueRefund" targetRef="end"/>
+    <endEvent id="end" name="End"/>
+  </process>
+  <bpmndi:BPMNDiagram id="diagram">
+    <bpmndi:BPMNPlane bpmnElement="refundWithDeadletter">
+      <bpmndi:BPMNShape bpmnElement="start">
+        <omgdc:Bounds x="30" y="80" width="30" height="30"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape bpmnElement="issueRefund">
+        <omgdc:Bounds x="120" y="60" width="100" height="70"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape bpmnElement="end">
+        <omgdc:Bounds x="270" y="80" width="30" height="30"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge bpmnElement="f1">
+        <omgdi:waypoint x="60" y="95"/>
+        <omgdi:waypoint x="120" y="95"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge bpmnElement="f2">
+        <omgdi:waypoint x="220" y="95"/>
+        <omgdi:waypoint x="270" y="95"/>
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</definitions>
