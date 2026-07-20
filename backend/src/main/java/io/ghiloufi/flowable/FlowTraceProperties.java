@@ -2,6 +2,9 @@ package io.ghiloufi.flowable;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
+/**
+ * {@link ConfigurationProperties @ConfigurationProperties} for the embedded flow-trace-ui backend.
+ */
 @ConfigurationProperties(prefix = "flowtrace")
 public class FlowTraceProperties {
 
