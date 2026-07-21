@@ -25,10 +25,10 @@ import org.springframework.context.annotation.Bean;
  * them active, 2 dead-letter jobs).
  *
  * <p>{@code orderApproval} deliberately gets 12 instances, not a token handful: Flowable's own REST
- * default page size is a hardcoded 10 ({@link io.github.ghiloufibg.flowable.FlowableDefaultPageSizeFilter}'s
- * Javadoc has the full story) - fewer than 11 rows anywhere would mean this suite passes
- * identically whether that filter is present, broken, or removed, silently defeating the one
- * regression this fixture exists to catch.
+ * default page size is a hardcoded 10 ({@link
+ * io.github.ghiloufibg.flowable.FlowableDefaultPageSizeFilter}'s Javadoc has the full story) -
+ * fewer than 11 rows anywhere would mean this suite passes identically whether that filter is
+ * present, broken, or removed, silently defeating the one regression this fixture exists to catch.
  */
 @SpringBootApplication
 public class E2eFixtureApp {
