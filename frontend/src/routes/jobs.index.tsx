@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { Pagination } from "@/components/pagination";
 import { AppShell } from "@/components/app-shell";
 import { RelTime } from "@/components/rel-time";
 import { jobHealth, useJobs, type EngineJob, type JobKind } from "@/lib/store";
@@ -47,6 +48,13 @@ function JobsListPage() {
     });
     return filtered;
   }, [all, q, type, sort]);
+
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+  useEffect(() => { setPage(1); }, [q, type, sort, rows.length]);
+  const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
+  const safePage = Math.min(page, pageCount);
+  const pageRows = rows.slice((safePage - 1) * pageSize, safePage * pageSize);
 
   return (
     <AppShell>
@@ -103,9 +111,16 @@ function JobsListPage() {
             {rows.length === 0 ? (
               <div className="p-8 text-center text-xs text-muted-foreground">No jobs match those filters.</div>
             ) : (
-              rows.map((j, i) => <Row key={j.id} j={j} last={i === rows.length - 1} />)
+              pageRows.map((j, i) => <Row key={j.id} j={j} last={i === pageRows.length - 1} />)
             )}
           </div>
+          <Pagination
+            total={rows.length}
+            page={safePage}
+            pageSize={pageSize}
+            onPageChange={setPage}
+            onPageSizeChange={(n) => { setPageSize(n); setPage(1); }}
+          />
         </div>
       </main>
     </AppShell>

@@ -16,10 +16,15 @@ interface Props {
  * Left rail is a filterable, definition-grouped tree of live instances
  * (Command-Center layout, VS Code / Temporal Web feel).
  */
+const GROUPS_PAGE = 15;
+const PER_GROUP_INITIAL = 8;
+
 export function AppShell({ children, headerRight }: Props) {
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState(false);
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "failed" | "ended">("all");
+  const [visibleGroups, setVisibleGroups] = useState(GROUPS_PAGE);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
   // ⌘K / Ctrl-K to focus search
   useEffect(() => {
@@ -38,6 +43,10 @@ export function AppShell({ children, headerRight }: Props) {
   }, []);
 
   const currentPath = useRouterState({ select: (r) => r.location.pathname });
+  const activeInstanceId = useMemo(() => {
+    const m = currentPath.match(/^\/instances\/([^/]+)/);
+    return m ? m[1] : null;
+  }, [currentPath]);
 
   const instances = useInstances();
 
@@ -61,6 +70,36 @@ export function AppShell({ children, headerRight }: Props) {
     }
     return Array.from(map.entries());
   }, [instances, query, statusFilter]);
+
+  // Reset caps whenever filters change
+  useEffect(() => {
+    setVisibleGroups(GROUPS_PAGE);
+    setExpandedGroups(new Set());
+  }, [query, statusFilter]);
+
+  // Active-instance safety net: keep the active row visible.
+  useEffect(() => {
+    if (!activeInstanceId) return;
+    const groupIdx = grouped.findIndex(([, list]) =>
+      list.some((p) => p.id === activeInstanceId),
+    );
+    if (groupIdx === -1) return;
+    if (groupIdx >= visibleGroups) {
+      setVisibleGroups((v) => Math.max(v, groupIdx + 1));
+    }
+    const [defKey, list] = grouped[groupIdx];
+    const posInGroup = list.findIndex((p) => p.id === activeInstanceId);
+    if (posInGroup >= PER_GROUP_INITIAL && !expandedGroups.has(defKey)) {
+      setExpandedGroups((s) => {
+        const next = new Set(s);
+        next.add(defKey);
+        return next;
+      });
+    }
+  }, [activeInstanceId, grouped, visibleGroups, expandedGroups]);
+
+  const visibleGrouped = grouped.slice(0, visibleGroups);
+  const hiddenGroupCount = Math.max(0, grouped.length - visibleGroups);
 
   const counts = useMemo(() => ({
     all: instances.filter((p) => !p.parentInstanceId).length,
@@ -124,23 +163,83 @@ export function AppShell({ children, headerRight }: Props) {
 
               <nav className="flex-1 overflow-auto scrollbar-thin px-1 py-2">
                 <div className="space-y-3">
-                  {grouped.map(([defKey, list]) => (
-                    <div key={defKey}>
-                      <div className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground truncate">
-                        {list[0].definitionName}
-                        <span className="ml-1 mono text-[9px] opacity-60">v{list[0].version}</span>
+                  {visibleGrouped.map(([defKey, list]) => {
+                    const expanded = expandedGroups.has(defKey);
+                    const shownList = expanded ? list : list.slice(0, PER_GROUP_INITIAL);
+                    const overflow = list.length - PER_GROUP_INITIAL;
+                    return (
+                      <div key={defKey}>
+                        <div className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground truncate">
+                          {list[0].definitionName}
+                          <span className="ml-1 mono text-[9px] opacity-60">v{list[0].version}</span>
+                          <span className="ml-1 mono text-[9px] opacity-60">· {list.length}</span>
+                        </div>
+                        <div className="space-y-0.5">
+                          {shownList.map((p) => (
+                            <InstanceRailItem
+                              key={p.id}
+                              p={p}
+                              active={currentPath === `/instances/${p.id}`}
+                            />
+                          ))}
+                          {overflow > 0 && !expanded && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setExpandedGroups((s) => {
+                                  const next = new Set(s);
+                                  next.add(defKey);
+                                  return next;
+                                })
+                              }
+                              className="w-full pl-4 pr-2 py-1 text-left mono text-[10px] text-muted-foreground hover:text-foreground"
+                            >
+                              + {overflow} more
+                            </button>
+                          )}
+                          {expanded && list.length > PER_GROUP_INITIAL && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setExpandedGroups((s) => {
+                                  const next = new Set(s);
+                                  next.delete(defKey);
+                                  return next;
+                                })
+                              }
+                              className="w-full pl-4 pr-2 py-1 text-left mono text-[10px] text-muted-foreground hover:text-foreground"
+                            >
+                              Show less
+                            </button>
+                          )}
+                        </div>
                       </div>
-                      <div className="space-y-0.5">
-                        {list.map((p) => (
-                          <InstanceRailItem
-                            key={p.id}
-                            p={p}
-                            active={currentPath === `/instances/${p.id}`}
-                          />
-                        ))}
-                      </div>
+                    );
+                  })}
+                  {hiddenGroupCount > 0 && (
+                    <div className="flex items-center justify-between gap-2 border-t border-border px-2 pt-2 text-[10px] text-muted-foreground">
+                      <span>
+                        <span className="mono">{visibleGroups}</span> of{" "}
+                        <span className="mono">{grouped.length}</span> definitions
+                      </span>
+                      <span className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setVisibleGroups((v) => v + GROUPS_PAGE)}
+                          className="text-[11px] text-muted-foreground hover:text-foreground"
+                        >
+                          Show {Math.min(GROUPS_PAGE, hiddenGroupCount)} more
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setVisibleGroups(grouped.length)}
+                          className="text-[11px] text-muted-foreground hover:text-foreground"
+                        >
+                          Show all
+                        </button>
+                      </span>
                     </div>
-                  ))}
+                  )}
                   {grouped.length === 0 && (
                     <div className="px-2 py-4 text-center text-[11px] text-muted-foreground">
                       No matches
