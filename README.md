@@ -53,7 +53,7 @@ Add the dependency:
 
 ```xml
 <dependency>
-  <groupId>io.ghiloufi.flowable</groupId>
+  <groupId>io.github.ghiloufibg</groupId>
   <artifactId>flow-trace-ui-backend</artifactId>
   <version>0.1.0-SNAPSHOT</version>
 </dependency>
@@ -96,7 +96,7 @@ flowtrace:
 | `GET /custom/jobs/health` | This library — aggregate timer/async/dead-letter/locked counts |
 
 Response shapes match the frontend's domain types field-for-field; see
-`backend/src/main/java/io/ghiloufi/flowable/rest/dto/`.
+`backend/src/main/java/io/github/ghiloufibg/flowable/rest/dto/`.
 
 ## Development
 

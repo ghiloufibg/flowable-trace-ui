@@ -38,7 +38,7 @@ interface FlowableHistoricProcessInstanceDTO {
 }
 
 // Mirrors the backend's ProcessInstanceSummaryDto (see
-// io.ghiloufi.flowable.rest.dto.ProcessInstanceSummaryDto) field-for-field.
+// io.github.ghiloufibg.flowable.rest.dto.ProcessInstanceSummaryDto) field-for-field.
 interface ProcessInstanceSummaryDto {
   id: string;
   definitionKey: string;

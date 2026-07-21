@@ -4,12 +4,12 @@
              xmlns:omgdc="http://www.omg.org/spec/DD/20100524/DC"
              xmlns:omgdi="http://www.omg.org/spec/DD/20100524/DI"
              xmlns:flowable="http://flowable.org/bpmn"
-             targetNamespace="io.ghiloufi.flowable.e2efixture">
+             targetNamespace="io.github.ghiloufibg.flowable.e2efixture">
   <process id="refundWithDeadletter" name="Refund (deliberately failing)" isExecutable="true">
     <startEvent id="start" name="Start"/>
     <sequenceFlow id="f1" sourceRef="start" targetRef="issueRefund"/>
     <serviceTask id="issueRefund" name="Issue Refund" flowable:async="true"
-                 flowable:class="io.ghiloufi.flowable.e2efixture.AlwaysFailingDelegate">
+                 flowable:class="io.github.ghiloufibg.flowable.e2efixture.AlwaysFailingDelegate">
       <extensionElements>
         <flowable:failedJobRetryTimeCycle>R1/PT1S</flowable:failedJobRetryTimeCycle>
       </extensionElements>

@@ -5,7 +5,7 @@
   <modelVersion>4.0.0</modelVersion>
 
   <parent>
-    <groupId>io.ghiloufi.flowable</groupId>
+    <groupId>io.github.ghiloufibg</groupId>
     <artifactId>flow-trace-ui</artifactId>
     <version>0.1.0-alpha.1</version>
   </parent>
@@ -34,7 +34,7 @@
          time backend's copy-resources execution below runs. No content dependency - backend
          doesn't compile against anything frontend produces. -->
     <dependency>
-      <groupId>io.ghiloufi.flowable</groupId>
+      <groupId>io.github.ghiloufibg</groupId>
       <artifactId>flow-trace-ui-frontend</artifactId>
       <version>${project.version}</version>
       <type>pom</type>

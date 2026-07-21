@@ -3,7 +3,7 @@
              xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
              xmlns:omgdc="http://www.omg.org/spec/DD/20100524/DC"
              xmlns:omgdi="http://www.omg.org/spec/DD/20100524/DI"
-             targetNamespace="io.ghiloufi.flowable.e2efixture">
+             targetNamespace="io.github.ghiloufibg.flowable.e2efixture">
   <process id="orderApproval" name="Order Approval" isExecutable="true">
     <startEvent id="start" name="Start"/>
     <sequenceFlow id="f1" sourceRef="start" targetRef="review"/>

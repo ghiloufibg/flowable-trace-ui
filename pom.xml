@@ -4,7 +4,7 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <groupId>io.ghiloufi.flowable</groupId>
+  <groupId>io.github.ghiloufibg</groupId>
   <artifactId>flow-trace-ui</artifactId>
   <version>0.1.0-alpha.1</version>
   <packaging>pom</packaging>
@@ -114,7 +114,7 @@
             <configuration>
               <publishingServerId>central</publishingServerId>
               <!--
-                Deliberately false: this groupId (io.ghiloufi.flowable) hasn't been through Central
+                Deliberately false: this groupId (io.github.ghiloufibg) hasn't been through Central
                 namespace verification/a real publish yet. Leaving auto-publish off means a tagged
                 release uploads and validates but stops short of going live, so the first several
                 releases can be reviewed in the Central Portal before finalizing - flip to true only

@@ -13,7 +13,7 @@ existing `ProcessEngine` and database — is documented in
 design decisions; check it before implementing any backend feature, and treat its
 "Open decisions" section as unvalidated until a spike confirms them.
 
-**Repo layout:** this is now a Maven multi-module project (`io.ghiloufi.flowable:flow-trace-ui`).
+**Repo layout:** this is now a Maven multi-module project (`io.github.ghiloufibg:flow-trace-ui`).
 `frontend/` holds the original React/Vite project unchanged in content (moved via `git mv`,
 history preserved); `backend/` is the Spring Boot 3 / Java 21 auto-configuration library
 being built per the design doc. See `claudedocs/implementation-plan.md` for the phased
