@@ -11,6 +11,16 @@ import org.springframework.jdbc.core.JdbcTemplate;
  */
 public class AuditRepository {
 
+  /**
+   * {@code FLOWTRACE_VARIABLE_HISTORY.CHANGE_TYPE} values - produced by {@link
+   * FlowTraceAuditEventListener}, filtered on by {@code InstanceEnrichmentController} when reading
+   * history back. Shared here so the two sides can't silently drift apart.
+   */
+  public static final String VARIABLE_CHANGE_CREATED = "CREATED";
+
+  public static final String VARIABLE_CHANGE_UPDATED = "UPDATED";
+  public static final String VARIABLE_CHANGE_DELETED = "DELETED";
+
   private final JdbcTemplate jdbcTemplate;
 
   public AuditRepository(DataSource dataSource) {

@@ -92,14 +92,9 @@ public class FlowTraceAutoConfiguration {
    */
   @Bean
   public FlowTraceSchemaMigration flowTraceSchemaMigration() {
-    DataSource dataSource = engineDataSource();
+    DataSource dataSource = processEngine.getProcessEngineConfiguration().getDataSource();
     FlowTraceSchemaInitializer.migrate(dataSource);
     return new FlowTraceSchemaMigration(dataSource);
-  }
-
-  /** The exact DataSource the existing ProcessEngine already uses - see decision in §5. */
-  private DataSource engineDataSource() {
-    return processEngine.getProcessEngineConfiguration().getDataSource();
   }
 
   /**
@@ -174,8 +169,8 @@ public class FlowTraceAutoConfiguration {
    */
   @Bean
   public DeploymentEnrichmentController flowTraceDeploymentEnrichmentController(
-      RepositoryService repositoryService) {
-    return new DeploymentEnrichmentController(repositoryService, engineDataSource());
+      RepositoryService repositoryService, FlowTraceSchemaMigration schemaMigration) {
+    return new DeploymentEnrichmentController(repositoryService, schemaMigration.dataSource());
   }
 
   @Bean
@@ -194,9 +189,14 @@ public class FlowTraceAutoConfiguration {
       ManagementService managementService,
       RepositoryService repositoryService,
       RuntimeService runtimeService,
-      HistoryService historyService) {
+      HistoryService historyService,
+      FlowTraceSchemaMigration schemaMigration) {
     return new JobEnrichmentController(
-        managementService, repositoryService, runtimeService, historyService, engineDataSource());
+        managementService,
+        repositoryService,
+        runtimeService,
+        historyService,
+        schemaMigration.dataSource());
   }
 
   @Bean
@@ -205,14 +205,15 @@ public class FlowTraceAutoConfiguration {
       RuntimeService runtimeService,
       TaskService taskService,
       HistoryService historyService,
-      ManagementService managementService) {
+      ManagementService managementService,
+      FlowTraceSchemaMigration schemaMigration) {
     return new InstanceEnrichmentController(
         repositoryService,
         runtimeService,
         taskService,
         historyService,
         managementService,
-        engineDataSource());
+        schemaMigration.dataSource());
   }
 
   @EventListener(ContextRefreshedEvent.class)

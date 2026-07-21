@@ -81,16 +81,18 @@ public class JobEnrichmentController {
   public EngineJobDto getJob(@PathVariable String id) {
     Job timerJob = managementService.createTimerJobQuery().jobId(id).singleResult();
     if (timerJob != null) {
-      return toDto(timerJob, "timer", managementService.getTimerJobExceptionStacktrace(id));
+      return toDto(timerJob, JobTypes.TIMER, managementService.getTimerJobExceptionStacktrace(id));
     }
     Job deadLetterJob = managementService.createDeadLetterJobQuery().jobId(id).singleResult();
     if (deadLetterJob != null) {
       return toDto(
-          deadLetterJob, "deadletter", managementService.getDeadLetterJobExceptionStacktrace(id));
+          deadLetterJob,
+          JobTypes.DEADLETTER,
+          managementService.getDeadLetterJobExceptionStacktrace(id));
     }
     Job asyncJob = managementService.createJobQuery().jobId(id).singleResult();
     if (asyncJob != null) {
-      return toDto(asyncJob, "async", managementService.getJobExceptionStacktrace(id));
+      return toDto(asyncJob, JobTypes.ASYNC, managementService.getJobExceptionStacktrace(id));
     }
     throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Job not found: " + id);
   }
@@ -136,13 +138,15 @@ public class JobEnrichmentController {
    * they're never locked, so {@link LockInfo#NONE} for them is correct, not a fallback.
    */
   private LockInfo loadLockInfo(String jobId, String type) {
-    if (type.equals("deadletter")) {
+    if (type.equals(JobTypes.DEADLETTER)) {
       return LockInfo.NONE;
     }
-    String table = type.equals("timer") ? "ACT_RU_TIMER_JOB" : "ACT_RU_JOB";
     List<Map<String, Object>> rows =
-        jdbcTemplate.queryForList(
-            "SELECT LOCK_OWNER_, LOCK_EXP_TIME_ FROM " + table + " WHERE ID_ = ?", jobId);
+        type.equals(JobTypes.TIMER)
+            ? jdbcTemplate.queryForList(
+                "SELECT LOCK_OWNER_, LOCK_EXP_TIME_ FROM ACT_RU_TIMER_JOB WHERE ID_ = ?", jobId)
+            : jdbcTemplate.queryForList(
+                "SELECT LOCK_OWNER_, LOCK_EXP_TIME_ FROM ACT_RU_JOB WHERE ID_ = ?", jobId);
     if (rows.isEmpty()) {
       return LockInfo.NONE;
     }

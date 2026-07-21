@@ -1,11 +1,11 @@
 package io.github.ghiloufibg.flowable.rest;
 
+import io.github.ghiloufibg.flowable.audit.AuditRepository;
 import io.github.ghiloufibg.flowable.rest.dto.ProcessInstanceDto;
 import io.github.ghiloufibg.flowable.rest.dto.ProcessInstanceSummaryDto;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -14,23 +14,9 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 import javax.sql.DataSource;
-import org.flowable.bpmn.model.Activity;
-import org.flowable.bpmn.model.BoundaryEvent;
 import org.flowable.bpmn.model.BpmnModel;
-import org.flowable.bpmn.model.CallActivity;
-import org.flowable.bpmn.model.EndEvent;
-import org.flowable.bpmn.model.ExclusiveGateway;
 import org.flowable.bpmn.model.FlowElement;
-import org.flowable.bpmn.model.FlowElementsContainer;
-import org.flowable.bpmn.model.GraphicInfo;
-import org.flowable.bpmn.model.ParallelGateway;
 import org.flowable.bpmn.model.Process;
-import org.flowable.bpmn.model.ScriptTask;
-import org.flowable.bpmn.model.SequenceFlow;
-import org.flowable.bpmn.model.ServiceTask;
-import org.flowable.bpmn.model.StartEvent;
-import org.flowable.bpmn.model.TimerEventDefinition;
-import org.flowable.bpmn.model.UserTask;
 import org.flowable.engine.HistoryService;
 import org.flowable.engine.ManagementService;
 import org.flowable.engine.RepositoryService;
@@ -59,7 +45,9 @@ import org.springframework.web.server.ResponseStatusException;
  * Backs {@code GET custom/instances/{id}} - see claudedocs/backend-library-design.md §7.2. The most
  * complex enrichment endpoint: assembles the full BPMN graph (structure from {@link BpmnModel},
  * runtime state from {@link RuntimeService}/{@link HistoryService}) plus variables, tasks, trail
- * and jobs.
+ * and jobs. The pure graph-shape logic (node/edge mapping, gateway/multi-instance heuristics) lives
+ * in {@link BpmnGraphSupport}; this class owns loading data via the Flowable services and JDBC, and
+ * assembling the final DTO.
  *
  * <p>{@code gatewayDecision} and edge {@code taken} are authoritative when {@code
  * FLOWTRACE_SEQUENCE_FLOW_TAKEN} has rows for the instance - populated live by {@code
@@ -74,30 +62,28 @@ import org.springframework.web.server.ResponseStatusException;
  * limited to the frontend's supported {@code BpmnNodeType} union; unsupported BPMN element types
  * (sub-process *container* shapes themselves, intermediate events, non-timer boundary events, etc.)
  * are omitted from {@code nodes[]} rather than mislabeled - {@code trail[]} follows the same rule
- * via {@link #mapActivityType(String)}: a {@link HistoricActivityInstance} row of an unsupported
- * type (e.g. a sequence-flow-level history entry) is omitted rather than defaulted to a misleading
- * type like {@code "serviceTask"}.
+ * via {@link BpmnGraphSupport#mapActivityType(String)}: a {@link HistoricActivityInstance} row of
+ * an unsupported type (e.g. a sequence-flow-level history entry) is omitted rather than defaulted
+ * to a misleading type like {@code "serviceTask"}.
  *
  * <p>{@code multiInstance} counts are derived from {@link HistoricActivityInstance} rows grouped by
- * activity id (one row per loop iteration) rather than execution-tree traversal - see {@link
- * #computeMultiInstanceInfo(List)}. For parallel multi-instance this is exact (all iterations' rows
- * exist as soon as the activity starts); for *sequential* multi-instance, {@code total}
- * under-counts the true loop cardinality until the last iteration has started, since rows are
- * created one at a time. Same standard as {@code gatewayDecision}: documented heuristic, not a
- * silent guess.
+ * activity id (one row per loop iteration) rather than execution-tree traversal. For parallel
+ * multi-instance this is exact (all iterations' rows exist as soon as the activity starts); for
+ * *sequential* multi-instance, {@code total} under-counts the true loop cardinality until the last
+ * iteration has started, since rows are created one at a time. Same standard as {@code
+ * gatewayDecision}: documented heuristic, not a silent guess.
  *
  * <p>{@code callActivity.childInstanceId} comes directly from {@link
- * HistoricActivityInstance#getCalledProcessInstanceId()} - see {@link
- * #resolveCallActivityChildInstanceId(List)}. Populated as soon as the child process instance
- * starts, not only after the call activity completes. A call activity that is itself multi-instance
- * (rare, technically allowed by BPMN) can spawn more than one child instance; since the DTO field
- * is a single string, one is reported (the currently-running one if any, else the most recently
- * started) rather than the full set.
+ * HistoricActivityInstance#getCalledProcessInstanceId()}. Populated as soon as the child process
+ * instance starts, not only after the call activity completes. A call activity that is itself
+ * multi-instance (rare, technically allowed by BPMN) can spawn more than one child instance; since
+ * the DTO field is a single string, one is reported (the currently-running one if any, else the
+ * most recently started) rather than the full set.
  *
  * <p>Flow elements nested inside a sub-process (including an embedded, {@code triggeredByEvent}
  * event sub-process) ARE walked and included when their own type is otherwise supported - {@link
- * #collectAllFlowElements(FlowElementsContainer)} recurses into every {@link FlowElementsContainer}
- * (which {@link Process} and every sub-process type implement) rather than reading only {@code
+ * BpmnGraphSupport#collectAllFlowElements} recurses into every {@code FlowElementsContainer} (which
+ * {@link Process} and every sub-process type implement) rather than reading only {@code
  * process.getFlowElements()}, which per Flowable's BPMN model API returns just the top-level
  * process's own direct children. Found live: a call activity nested inside an event sub-process
  * (masterclass's {@code refundProcessCallActivity}, inside {@code paymentCallbackEventSubProcess})
@@ -144,7 +130,7 @@ public class InstanceEnrichmentController {
     Process process = bpmnModel.getProcessById(historic.getProcessDefinitionKey());
     // Flattened once and reused below: includes elements nested inside sub-processes (see class
     // Javadoc), not just process.getFlowElements()'s top-level view.
-    List<FlowElement> allFlowElements = collectAllFlowElements(process);
+    List<FlowElement> allFlowElements = BpmnGraphSupport.collectAllFlowElements(process);
 
     Set<String> activeActivityIds =
         active ? new HashSet<>(runtimeService.getActiveActivityIds(id)) : Set.of();
@@ -159,24 +145,27 @@ public class InstanceEnrichmentController {
     Map<String, TaskInfo> tasksByActivityId = loadTasksByActivityId(id);
     Map<String, ProcessInstanceDto.JobError> jobErrorsByActivityId =
         loadJobErrorsByActivityId(id, bpmnModel);
+    Map<String, Job> timerJobsByActivityId = loadTimerJobsByActivityId(id);
     Map<String, List<HistoricActivityInstance>> historicByActivityId =
         historicActivities.stream()
             .collect(Collectors.groupingBy(HistoricActivityInstance::getActivityId));
     Map<String, Instant> takenSequenceFlows = loadTakenSequenceFlows(id);
 
     List<ProcessInstanceDto.BpmnNode> nodes =
-        buildNodes(
-            id,
+        BpmnGraphSupport.buildNodes(
             allFlowElements,
             bpmnModel,
             activeActivityIds,
             reachedActivityIds,
             tasksByActivityId,
             jobErrorsByActivityId,
+            timerJobsByActivityId,
             historicByActivityId,
-            takenSequenceFlows);
+            takenSequenceFlows,
+            this::candidateGroupsOf);
     List<ProcessInstanceDto.BpmnEdge> edges =
-        buildEdges(allFlowElements, bpmnModel, reachedActivityIds, takenSequenceFlows);
+        BpmnGraphSupport.buildEdges(
+            allFlowElements, bpmnModel, reachedActivityIds, takenSequenceFlows);
     List<ProcessInstanceDto.Variable> variables = buildVariables(id, active);
     List<ProcessInstanceDto.TaskItem> tasks = buildTasks(id);
     List<ProcessInstanceDto.TrailEntry> trail = buildTrail(historicActivities);
@@ -329,30 +318,16 @@ public class InstanceEnrichmentController {
         continue;
       }
       FlowElement element = bpmnModel.getFlowElement(activityId);
-      String type = element != null ? mapNodeType(element) : null;
+      String type = element != null ? BpmnGraphSupport.mapNodeType(element) : null;
       if (type == null) {
         continue;
       }
       nodes.add(
-          new ProcessInstanceDto.BpmnNode(
+          BpmnGraphSupport.summaryNode(
               element.getId(),
               element.getName() != null ? element.getName() : element.getId(),
               type,
-              0,
-              0,
-              null,
-              null,
-              "active",
-              null,
-              null,
-              null,
-              null,
-              null,
-              null,
-              null,
-              null,
-              null,
-              null));
+              "active"));
     }
     return nodes;
   }
@@ -421,33 +396,8 @@ public class InstanceEnrichmentController {
     return byActivityId;
   }
 
-  /**
-   * Recursively collects every {@link FlowElement} in {@code container}, including those nested
-   * inside sub-processes (embedded event sub-processes, ad-hoc sub-processes, transactions, etc. -
-   * anything implementing {@link FlowElementsContainer}), not just the container's own direct
-   * children. {@code process.getFlowElements()} alone only returns the top level.
-   */
-  private static List<FlowElement> collectAllFlowElements(FlowElementsContainer container) {
-    List<FlowElement> all = new ArrayList<>();
-    for (FlowElement element : container.getFlowElements()) {
-      all.add(element);
-      if (element instanceof FlowElementsContainer nestedContainer) {
-        all.addAll(collectAllFlowElements(nestedContainer));
-      }
-    }
-    return all;
-  }
-
-  private List<ProcessInstanceDto.BpmnNode> buildNodes(
-      String processInstanceId,
-      List<FlowElement> allFlowElements,
-      BpmnModel bpmnModel,
-      Set<String> activeActivityIds,
-      Set<String> reachedActivityIds,
-      Map<String, TaskInfo> tasksByActivityId,
-      Map<String, ProcessInstanceDto.JobError> jobErrorsByActivityId,
-      Map<String, List<HistoricActivityInstance>> historicByActivityId,
-      Map<String, Instant> takenSequenceFlows) {
+  /** Sibling to {@link #loadTasksByActivityId}/{@link #loadJobErrorsByActivityId}. */
+  private Map<String, Job> loadTimerJobsByActivityId(String processInstanceId) {
     Map<String, Job> timerJobsByActivityId = new HashMap<>();
     for (Job timerJob :
         managementService.createTimerJobQuery().processInstanceId(processInstanceId).list()) {
@@ -455,85 +405,7 @@ public class InstanceEnrichmentController {
         timerJobsByActivityId.put(timerJob.getElementId(), timerJob);
       }
     }
-
-    List<ProcessInstanceDto.BpmnNode> nodes = new ArrayList<>();
-    for (FlowElement element : allFlowElements) {
-      String type = mapNodeType(element);
-      if (type == null) {
-        continue;
-      }
-      GraphicInfo graphicInfo = bpmnModel.getGraphicInfo(element.getId());
-      if (graphicInfo == null) {
-        continue;
-      }
-
-      boolean isActive = activeActivityIds.contains(element.getId());
-      ProcessInstanceDto.JobError jobError = jobErrorsByActivityId.get(element.getId());
-      String state =
-          isActive
-              ? (jobError != null ? "failed" : "active")
-              : (reachedActivityIds.contains(element.getId()) ? "completed" : "pending");
-
-      TaskInfo taskInfo = tasksByActivityId.get(element.getId());
-      String assignee = taskInfo != null ? taskInfo.getAssignee() : null;
-      Instant dueDate =
-          taskInfo != null && taskInfo.getDueDate() != null
-              ? taskInfo.getDueDate().toInstant()
-              : null;
-      Integer priority = taskInfo != null ? taskInfo.getPriority() : null;
-      List<String> candidateGroups = taskInfo != null ? candidateGroupsOf(taskInfo) : null;
-
-      Instant timerDueAt = null;
-      String attachedTo = null;
-      if (element instanceof BoundaryEvent boundaryEvent) {
-        attachedTo = boundaryEvent.getAttachedToRefId();
-        Job timerJob = timerJobsByActivityId.get(element.getId());
-        timerDueAt =
-            timerJob != null && timerJob.getDuedate() != null
-                ? timerJob.getDuedate().toInstant()
-                : null;
-      }
-
-      String gatewayDecision =
-          (element instanceof ExclusiveGateway) && reachedActivityIds.contains(element.getId())
-              ? resolveGatewayDecision(
-                  allFlowElements, element, reachedActivityIds, takenSequenceFlows)
-              : null;
-
-      ProcessInstanceDto.MultiInstanceInfo multiInstance =
-          (element instanceof Activity activity && activity.getLoopCharacteristics() != null)
-              ? computeMultiInstanceInfo(
-                  historicByActivityId.getOrDefault(element.getId(), List.of()))
-              : null;
-
-      String childInstanceId =
-          (element instanceof CallActivity)
-              ? resolveCallActivityChildInstanceId(
-                  historicByActivityId.getOrDefault(element.getId(), List.of()))
-              : null;
-
-      nodes.add(
-          new ProcessInstanceDto.BpmnNode(
-              element.getId(),
-              element.getName() != null ? element.getName() : element.getId(),
-              type,
-              graphicInfo.getX(),
-              graphicInfo.getY(),
-              graphicInfo.getWidth(),
-              graphicInfo.getHeight(),
-              state,
-              assignee,
-              candidateGroups,
-              dueDate,
-              priority,
-              multiInstance,
-              gatewayDecision,
-              jobError,
-              timerDueAt,
-              childInstanceId,
-              attachedTo));
-    }
-    return nodes;
+    return timerJobsByActivityId;
   }
 
   /**
@@ -571,131 +443,6 @@ public class InstanceEnrichmentController {
           (String) row.get("SEQUENCE_FLOW_ID"), ((Timestamp) row.get("TAKEN_AT")).toInstant());
     }
     return byFlowId;
-  }
-
-  private static String resolveGatewayDecision(
-      List<FlowElement> allFlowElements,
-      FlowElement gateway,
-      Set<String> reachedActivityIds,
-      Map<String, Instant> takenSequenceFlows) {
-    var outgoing =
-        allFlowElements.stream()
-            .filter(
-                e -> e instanceof SequenceFlow flow && flow.getSourceRef().equals(gateway.getId()))
-            .map(e -> (SequenceFlow) e);
-    if (!takenSequenceFlows.isEmpty()) {
-      return outgoing
-          .filter(flow -> takenSequenceFlows.containsKey(flow.getId()))
-          .max(Comparator.comparing(flow -> takenSequenceFlows.get(flow.getId())))
-          .map(flow -> flow.getName() != null ? flow.getName() : flow.getTargetRef())
-          .orElse(null);
-    }
-    return outgoing
-        .filter(flow -> reachedActivityIds.contains(flow.getTargetRef()))
-        .findFirst()
-        .map(flow -> flow.getName() != null ? flow.getName() : flow.getTargetRef())
-        .orElse(null);
-  }
-
-  /**
-   * One {@link HistoricActivityInstance} row exists per loop iteration of a multi-instance
-   * activity, all sharing the element's activity id. See the class Javadoc for the
-   * parallel-exact/sequential-undercounts caveat.
-   */
-  private static ProcessInstanceDto.MultiInstanceInfo computeMultiInstanceInfo(
-      List<HistoricActivityInstance> instances) {
-    if (instances.isEmpty()) {
-      return null;
-    }
-    int total = instances.size();
-    int completed = (int) instances.stream().filter(hai -> hai.getEndTime() != null).count();
-    return new ProcessInstanceDto.MultiInstanceInfo(total, total - completed, completed);
-  }
-
-  /**
-   * Prefers the currently-running call (endTime == null) if one exists, since that's the case the
-   * "jump to child instance" UI action cares about most; otherwise falls back to the most recently
-   * started call. A call activity re-executed via a loop/multi-instance combination has multiple
-   * rows here - this reports one, not a list, matching the DTO's single-value field.
-   */
-  private static String resolveCallActivityChildInstanceId(List<HistoricActivityInstance> calls) {
-    return calls.stream()
-        .filter(hai -> hai.getEndTime() == null)
-        .findFirst()
-        .or(() -> calls.stream().max(Comparator.comparing(HistoricActivityInstance::getStartTime)))
-        .map(HistoricActivityInstance::getCalledProcessInstanceId)
-        .orElse(null);
-  }
-
-  private static String mapNodeType(FlowElement element) {
-    if (element instanceof BoundaryEvent boundaryEvent) {
-      return hasTimerDefinition(boundaryEvent) ? "boundaryTimer" : null;
-    }
-    if (element instanceof StartEvent) {
-      return "startEvent";
-    }
-    if (element instanceof EndEvent) {
-      return "endEvent";
-    }
-    if (element instanceof UserTask) {
-      return "userTask";
-    }
-    if (element instanceof ServiceTask) {
-      return "serviceTask";
-    }
-    if (element instanceof ScriptTask) {
-      return "scriptTask";
-    }
-    if (element instanceof ExclusiveGateway) {
-      return "exclusiveGateway";
-    }
-    if (element instanceof ParallelGateway) {
-      return "parallelGateway";
-    }
-    if (element instanceof CallActivity) {
-      return "callActivity";
-    }
-    return null;
-  }
-
-  private static boolean hasTimerDefinition(BoundaryEvent event) {
-    return event.getEventDefinitions().stream()
-        .anyMatch(def -> def instanceof TimerEventDefinition);
-  }
-
-  private List<ProcessInstanceDto.BpmnEdge> buildEdges(
-      List<FlowElement> allFlowElements,
-      BpmnModel bpmnModel,
-      Set<String> reachedActivityIds,
-      Map<String, Instant> takenSequenceFlows) {
-    List<ProcessInstanceDto.BpmnEdge> edges = new ArrayList<>();
-    for (FlowElement element : allFlowElements) {
-      if (!(element instanceof SequenceFlow flow)) {
-        continue;
-      }
-      List<GraphicInfo> waypointInfos = bpmnModel.getFlowLocationGraphicInfo(flow.getId());
-      List<ProcessInstanceDto.Waypoint> waypoints =
-          waypointInfos == null
-              ? null
-              : waypointInfos.stream()
-                  .map(gi -> new ProcessInstanceDto.Waypoint(gi.getX(), gi.getY()))
-                  .toList();
-      boolean taken =
-          !takenSequenceFlows.isEmpty()
-              ? takenSequenceFlows.containsKey(flow.getId())
-              : reachedActivityIds.contains(flow.getSourceRef())
-                  && reachedActivityIds.contains(flow.getTargetRef());
-      edges.add(
-          new ProcessInstanceDto.BpmnEdge(
-              flow.getId(),
-              flow.getSourceRef(),
-              flow.getTargetRef(),
-              flow.getName(),
-              flow.getConditionExpression(),
-              taken,
-              waypoints));
-    }
-    return edges;
   }
 
   private List<ProcessInstanceDto.Variable> buildVariables(
@@ -738,10 +485,11 @@ public class InstanceEnrichmentController {
     List<Map<String, Object>> rows =
         jdbcTemplate.queryForList(
             "SELECT CHANGE_TYPE, VARIABLE_VALUE, CHANGED_AT FROM FLOWTRACE_VARIABLE_HISTORY"
-                + " WHERE PROCESS_INSTANCE_ID = ? AND VARIABLE_NAME = ? AND CHANGE_TYPE != 'DELETED'"
+                + " WHERE PROCESS_INSTANCE_ID = ? AND VARIABLE_NAME = ? AND CHANGE_TYPE != ?"
                 + " ORDER BY CHANGED_AT",
             processInstanceId,
-            variableName);
+            variableName,
+            AuditRepository.VARIABLE_CHANGE_DELETED);
     List<ProcessInstanceDto.VariableChange> history = new ArrayList<>();
     String previousValue = null;
     int revision = 1;
@@ -801,7 +549,7 @@ public class InstanceEnrichmentController {
   }
 
   private ProcessInstanceDto.TrailEntry toTrailEntry(HistoricActivityInstance hai) {
-    String type = mapActivityType(hai.getActivityType());
+    String type = BpmnGraphSupport.mapActivityType(hai.getActivityType());
     if (type == null) {
       return null;
     }
@@ -815,37 +563,19 @@ public class InstanceEnrichmentController {
         hai.getDurationInMillis());
   }
 
-  private static String mapActivityType(String flowableActivityType) {
-    if (flowableActivityType == null) {
-      return null;
-    }
-    return switch (flowableActivityType) {
-      case "startEvent" -> "startEvent";
-      case "endEvent" -> "endEvent";
-      case "userTask" -> "userTask";
-      case "serviceTask" -> "serviceTask";
-      case "scriptTask" -> "scriptTask";
-      case "exclusiveGateway" -> "exclusiveGateway";
-      case "parallelGateway" -> "parallelGateway";
-      case "callActivity" -> "callActivity";
-      case "boundaryTimer" -> "boundaryTimer";
-      default -> null;
-    };
-  }
-
   private List<ProcessInstanceDto.JobItem> buildJobs(
       String processInstanceId, BpmnModel bpmnModel) {
     List<ProcessInstanceDto.JobItem> jobs = new ArrayList<>();
     for (Job job :
         managementService.createTimerJobQuery().processInstanceId(processInstanceId).list()) {
-      jobs.add(toJobItem(job, "timer", bpmnModel));
+      jobs.add(toJobItem(job, JobTypes.TIMER, bpmnModel));
     }
     for (Job job : managementService.createJobQuery().processInstanceId(processInstanceId).list()) {
-      jobs.add(toJobItem(job, "async", bpmnModel));
+      jobs.add(toJobItem(job, JobTypes.ASYNC, bpmnModel));
     }
     for (Job job :
         managementService.createDeadLetterJobQuery().processInstanceId(processInstanceId).list()) {
-      jobs.add(toJobItem(job, "deadletter", bpmnModel));
+      jobs.add(toJobItem(job, JobTypes.DEADLETTER, bpmnModel));
     }
     return jobs;
   }

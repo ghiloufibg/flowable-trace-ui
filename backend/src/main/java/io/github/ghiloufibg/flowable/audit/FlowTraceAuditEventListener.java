@@ -106,13 +106,13 @@ public class FlowTraceAuditEventListener implements FlowableEventListener {
 
   private static String changeTypeFor(FlowableEventType type) {
     if (type == FlowableEngineEventType.VARIABLE_CREATED) {
-      return "CREATED";
+      return AuditRepository.VARIABLE_CHANGE_CREATED;
     }
     if (type == FlowableEngineEventType.VARIABLE_UPDATED) {
-      return "UPDATED";
+      return AuditRepository.VARIABLE_CHANGE_UPDATED;
     }
     if (type == FlowableEngineEventType.VARIABLE_DELETED) {
-      return "DELETED";
+      return AuditRepository.VARIABLE_CHANGE_DELETED;
     }
     return null;
   }
