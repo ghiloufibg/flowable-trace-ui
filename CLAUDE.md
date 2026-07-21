@@ -3,7 +3,7 @@
 ## Project overview
 
 Flow-Trace UI is a Flowable BPM trace/monitoring frontend, currently a single React +
-TanStack repo connected to Lovable (see `AGENTS.md`), talking to a mock HTTP server
+TanStack repo connected to Lovable, talking to a mock HTTP server
 compatible with the Flowable 7.x REST API plus custom enrichment endpoints.
 
 The approved architecture for the real backend — a Spring Boot 3 / Java 21 / Flowable 7.x
