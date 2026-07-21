@@ -22,7 +22,9 @@ test.describe("Jobs", () => {
 
   test("job detail shows the exception and retry controls", async ({ page }) => {
     await page.goto("jobs");
-    await page.locator("a", { hasText: "Issue Refund" }).first().click();
+    // Scoped to <main>: the sidebar also links to /instances/$id for any instance whose
+    // current activity is "Issue Refund", and a plain page-wide locator matches that first.
+    await page.locator("main a", { hasText: "Issue Refund" }).first().click();
     await expect(page).toHaveURL(/\/jobs\//);
 
     await expect(page.getByText("Deliberate failure for E2E fixture data").first()).toBeVisible();
