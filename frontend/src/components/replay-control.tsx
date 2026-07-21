@@ -25,7 +25,7 @@ export function ReplayControl({
 }: Props) {
   const panelRef = useRef<HTMLDivElement | null>(null);
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
   const dragRef = useRef<{ dx: number; dy: number } | null>(null);
 
   // Initialise position from bottom-left of container
