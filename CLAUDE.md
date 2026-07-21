@@ -19,9 +19,6 @@ history preserved); `backend/` is the Spring Boot 3 / Java 21 auto-configuration
 being built per the design doc. See `claudedocs/implementation-plan.md` for the phased
 build-out and current progress.
 
-**No git remote is currently configured** (intentionally removed to avoid accidentally
-pushing to the Lovable-connected repo). Don't add one without the user asking.
-
 ## Component code is owned by Lovable
 
 Never modify component/UI code — anything under `frontend/src/components/`,

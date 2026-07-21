@@ -40,6 +40,11 @@ frontend/playwright-report/
 frontend/blob-report/
 frontend/playwright/.cache/
 
-# Claude Code working documentation (see CLAUDE.md) - local only, not tracked going forward.
-# Files already committed before this line was added stay tracked.
+# Claude Code working documentation (see CLAUDE.md) - local only, never tracked.
 claudedocs/
+
+# Lovable's own working files - never meant to be committed.
+.lovable/
+
+# Superseded by CLAUDE.md - not meant to be tracked.
+AGENTS.md
