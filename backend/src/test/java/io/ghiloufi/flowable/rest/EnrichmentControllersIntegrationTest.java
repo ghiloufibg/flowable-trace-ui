@@ -9,9 +9,11 @@ import io.ghiloufi.flowable.rest.dto.DeploymentDto;
 import io.ghiloufi.flowable.rest.dto.JobHealthDto;
 import io.ghiloufi.flowable.rest.dto.ProcessDefinitionDto;
 import io.ghiloufi.flowable.rest.dto.ProcessInstanceDto;
+import io.ghiloufi.flowable.rest.dto.ProcessInstanceSummaryDto;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import javax.sql.DataSource;
@@ -956,6 +958,123 @@ class EnrichmentControllersIntegrationTest {
         .containsOnly("startEvent", "userTask", "exclusiveGateway", "endEvent");
     assertThat(ended.trail().stream().map(ProcessInstanceDto.TrailEntry::activityId))
         .contains("start", "review", "decision", "end");
+  }
+
+  @Test
+  void instanceSummaryEndpointReturnsListRowFieldsAcrossActiveAndEndedInstances() {
+    processEngine
+        .getRepositoryService()
+        .createDeployment()
+        .name("Order Approval Deployment")
+        .addString("orderApproval.bpmn20.xml", PROCESS_XML)
+        .deploy();
+
+    String activeInstanceId =
+        processEngine
+            .getRuntimeService()
+            .startProcessInstanceByKey("orderApproval", "ORD-300", Map.of())
+            .getId();
+
+    String endedInstanceId =
+        processEngine
+            .getRuntimeService()
+            .startProcessInstanceByKey("orderApproval", "ORD-301", Map.of("approved", true))
+            .getId();
+    Task endedTask =
+        processEngine
+            .getTaskService()
+            .createTaskQuery()
+            .processInstanceId(endedInstanceId)
+            .singleResult();
+    processEngine.getTaskService().complete(endedTask.getId());
+
+    List<ProcessInstanceSummaryDto> summaries = instanceController.listInstanceSummaries();
+    assertThat(summaries).hasSize(2);
+
+    ProcessInstanceSummaryDto activeSummary = findSummary(summaries, activeInstanceId);
+    assertThat(activeSummary.status()).isEqualTo("active");
+    assertThat(activeSummary.businessKey()).isEqualTo("ORD-300");
+    assertThat(activeSummary.definitionKey()).isEqualTo("orderApproval");
+    assertThat(activeSummary.version()).isEqualTo(1);
+    assertThat(activeSummary.startedAt()).isNotNull();
+    assertThat(activeSummary.endedAt()).isNull();
+    assertThat(activeSummary.deployedAt()).isNotNull();
+    assertThat(activeSummary.failedJobCount()).isZero();
+    assertThat(activeSummary.activeActivities())
+        .extracting(ProcessInstanceDto.BpmnNode::id)
+        .containsExactly("review");
+    assertThat(activeSummary.activeActivities().get(0).type()).isEqualTo("userTask");
+    assertThat(activeSummary.activeActivities().get(0).state()).isEqualTo("active");
+
+    ProcessInstanceSummaryDto endedSummary = findSummary(summaries, endedInstanceId);
+    assertThat(endedSummary.status()).isEqualTo("ended");
+    assertThat(endedSummary.businessKey()).isEqualTo("ORD-301");
+    assertThat(endedSummary.endedAt()).isNotNull();
+    assertThat(endedSummary.activeActivities()).isEmpty();
+  }
+
+  @Test
+  void instanceSummaryEndpointReportsDeadLetterCountPerInstance() {
+    processEngine
+        .getRepositoryService()
+        .createDeployment()
+        .addString("asyncFailDefaultRetries.bpmn20.xml", ASYNC_FAIL_DEFAULT_RETRIES_XML)
+        .deploy();
+    String instanceId =
+        processEngine
+            .getRuntimeService()
+            .startProcessInstanceByKey("asyncFailDefaultRetries")
+            .getId();
+    Job job = processEngine.getManagementService().createJobQuery().singleResult();
+    processEngine.getManagementService().moveJobToDeadLetterJob(job.getId());
+
+    List<ProcessInstanceSummaryDto> summaries = instanceController.listInstanceSummaries();
+
+    ProcessInstanceSummaryDto summary = findSummary(summaries, instanceId);
+    assertThat(summary.failedJobCount()).isEqualTo(1);
+  }
+
+  @Test
+  void
+      instanceSummaryEndpointResolvesActiveActivitiesIndependentlyAcrossInstancesOfTheSameDefinition() {
+    // Exercises the per-request BpmnModel cache (bpmnModelByDefinitionId): both instances share
+    // one process definition, so the model is parsed once and reused - this asserts that reuse
+    // doesn't cross-contaminate results between the two instances.
+    processEngine
+        .getRepositoryService()
+        .createDeployment()
+        .name("Order Approval Deployment")
+        .addString("orderApproval.bpmn20.xml", PROCESS_XML)
+        .deploy();
+
+    String firstInstanceId =
+        processEngine
+            .getRuntimeService()
+            .startProcessInstanceByKey("orderApproval", "ORD-400", Map.of())
+            .getId();
+    String secondInstanceId =
+        processEngine
+            .getRuntimeService()
+            .startProcessInstanceByKey("orderApproval", "ORD-401", Map.of())
+            .getId();
+
+    List<ProcessInstanceSummaryDto> summaries = instanceController.listInstanceSummaries();
+
+    for (String id : List.of(firstInstanceId, secondInstanceId)) {
+      ProcessInstanceSummaryDto summary = findSummary(summaries, id);
+      assertThat(summary.activeActivities())
+          .extracting(ProcessInstanceDto.BpmnNode::id)
+          .containsExactly("review");
+      assertThat(summary.activeActivities().get(0).name()).isEqualTo("Review Order");
+    }
+  }
+
+  private static ProcessInstanceSummaryDto findSummary(
+      List<ProcessInstanceSummaryDto> summaries, String instanceId) {
+    return summaries.stream()
+        .filter(s -> s.id().equals(instanceId))
+        .findFirst()
+        .orElseThrow(() -> new AssertionError("Summary not found: " + instanceId));
   }
 
   @Test

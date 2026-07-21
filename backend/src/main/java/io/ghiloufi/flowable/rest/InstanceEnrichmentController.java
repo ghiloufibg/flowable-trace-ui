@@ -1,6 +1,7 @@
 package io.ghiloufi.flowable.rest;
 
 import io.ghiloufi.flowable.rest.dto.ProcessInstanceDto;
+import io.ghiloufi.flowable.rest.dto.ProcessInstanceSummaryDto;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -8,6 +9,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.flowable.bpmn.model.Activity;
@@ -36,6 +38,7 @@ import org.flowable.engine.TaskService;
 import org.flowable.engine.history.HistoricActivityInstance;
 import org.flowable.engine.history.HistoricProcessInstance;
 import org.flowable.engine.repository.Deployment;
+import org.flowable.engine.runtime.Execution;
 import org.flowable.identitylink.api.IdentityLinkInfo;
 import org.flowable.job.api.Job;
 import org.flowable.task.api.Task;
@@ -207,6 +210,151 @@ public class InstanceEnrichmentController {
         tasks,
         trail,
         jobs);
+  }
+
+  /**
+   * Backs {@code GET custom/instances} - see claudedocs/design-instance-summary-endpoint.md. The
+   * bulk-list counterpart to {@link #getInstance(String)}: no BPMN graph, no JDBC audit-table
+   * lookups, just the fields list rows render. A single {@link HistoryService} query covers active
+   * and ended instances (history tracks from instance creation, not just completion), so unlike the
+   * frontend's own historic hydration this needs no separate "active" query to merge.
+   *
+   * <p>{@code ExecutionQuery} and {@code BaseJobQuery} have no {@code processInstanceIdIn}-style
+   * batch filter (checked against the real Flowable 7.1 API, not assumed) - active executions and
+   * dead-letter jobs are each fetched with one unfiltered query and grouped by process instance id
+   * in memory instead, rather than one query per instance.
+   */
+  @GetMapping
+  public List<ProcessInstanceSummaryDto> listInstanceSummaries() {
+    List<HistoricProcessInstance> historics =
+        historyService.createHistoricProcessInstanceQuery().list();
+
+    Map<String, List<Execution>> activeExecutionsByInstance =
+        runtimeService.createExecutionQuery().onlyChildExecutions().list().stream()
+            .filter(e -> e.getActivityId() != null)
+            .collect(Collectors.groupingBy(Execution::getProcessInstanceId));
+
+    Map<String, Long> deadLetterCountByInstance =
+        managementService.createDeadLetterJobQuery().list().stream()
+            .collect(Collectors.groupingBy(Job::getProcessInstanceId, Collectors.counting()));
+
+    Set<String> deploymentIds =
+        historics.stream()
+            .map(HistoricProcessInstance::getDeploymentId)
+            .filter(Objects::nonNull)
+            .collect(Collectors.toSet());
+    Map<String, Instant> deployedAtByDeployment =
+        deploymentIds.isEmpty()
+            ? Map.of()
+            : repositoryService
+                .createDeploymentQuery()
+                .deploymentIds(new ArrayList<>(deploymentIds))
+                .list()
+                .stream()
+                .collect(
+                    Collectors.toMap(Deployment::getId, d -> d.getDeploymentTime().toInstant()));
+
+    Map<String, BpmnModel> bpmnModelByDefinitionId = new HashMap<>();
+
+    return historics.stream()
+        .map(
+            h ->
+                toSummaryDto(
+                    h,
+                    activeExecutionsByInstance,
+                    deadLetterCountByInstance,
+                    deployedAtByDeployment,
+                    bpmnModelByDefinitionId))
+        .toList();
+  }
+
+  private ProcessInstanceSummaryDto toSummaryDto(
+      HistoricProcessInstance historic,
+      Map<String, List<Execution>> activeExecutionsByInstance,
+      Map<String, Long> deadLetterCountByInstance,
+      Map<String, Instant> deployedAtByDeployment,
+      Map<String, BpmnModel> bpmnModelByDefinitionId) {
+    List<Execution> activeExecutions =
+        activeExecutionsByInstance.getOrDefault(historic.getId(), List.of());
+    List<ProcessInstanceDto.BpmnNode> activeActivities =
+        activeExecutions.isEmpty()
+            ? List.of()
+            : buildActiveActivityNodes(historic, activeExecutions, bpmnModelByDefinitionId);
+
+    return new ProcessInstanceSummaryDto(
+        historic.getId(),
+        historic.getProcessDefinitionKey(),
+        historic.getProcessDefinitionName() != null
+            ? historic.getProcessDefinitionName()
+            : historic.getProcessDefinitionKey(),
+        historic.getProcessDefinitionVersion() != null ? historic.getProcessDefinitionVersion() : 0,
+        historic.getBusinessKey(),
+        resolveStatus(historic),
+        historic.getStartTime() != null ? historic.getStartTime().toInstant() : null,
+        historic.getEndTime() != null ? historic.getEndTime().toInstant() : null,
+        historic.getStartUserId(),
+        historic.getDeploymentId() != null
+            ? deployedAtByDeployment.get(historic.getDeploymentId())
+            : null,
+        historic.getSuperProcessInstanceId(),
+        activeActivities,
+        deadLetterCountByInstance.getOrDefault(historic.getId(), 0L).intValue());
+  }
+
+  /**
+   * Resolves each active execution's current activity to a lightweight {@link
+   * ProcessInstanceDto.BpmnNode} (id/name/type/state - the fields list rows actually read via the
+   * frontend's {@code currentActivities()}). {@link BpmnModel} is parsed once per distinct process
+   * definition and cached in {@code bpmnModelByDefinitionId} across the whole request, not once per
+   * instance - a page mixing many instances of the same few definitions only pays the parse cost
+   * once per definition, not once per instance.
+   */
+  private List<ProcessInstanceDto.BpmnNode> buildActiveActivityNodes(
+      HistoricProcessInstance historic,
+      List<Execution> activeExecutions,
+      Map<String, BpmnModel> bpmnModelByDefinitionId) {
+    BpmnModel bpmnModel =
+        bpmnModelByDefinitionId.computeIfAbsent(
+            historic.getProcessDefinitionId(), repositoryService::getBpmnModel);
+    if (bpmnModel == null) {
+      return List.of();
+    }
+    List<ProcessInstanceDto.BpmnNode> nodes = new ArrayList<>();
+    Set<String> seenActivityIds = new HashSet<>();
+    for (Execution execution : activeExecutions) {
+      String activityId = execution.getActivityId();
+      // Multi-instance activities have one execution per iteration - one summary node per
+      // activity id is enough here (unlike buildNodes(), which isn't called for the summary).
+      if (!seenActivityIds.add(activityId)) {
+        continue;
+      }
+      FlowElement element = bpmnModel.getFlowElement(activityId);
+      String type = element != null ? mapNodeType(element) : null;
+      if (type == null) {
+        continue;
+      }
+      nodes.add(
+          new ProcessInstanceDto.BpmnNode(
+              element.getId(),
+              element.getName() != null ? element.getName() : element.getId(),
+              type,
+              0,
+              0,
+              null,
+              null,
+              "active",
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null));
+    }
+    return nodes;
   }
 
   private static String resolveStatus(HistoricProcessInstance historic) {
