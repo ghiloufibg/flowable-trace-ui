@@ -4,13 +4,14 @@ import io.github.ghiloufibg.flowable.rest.dto.EngineJobDto;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import javax.sql.DataSource;
 import org.flowable.bpmn.model.Activity;
 import org.flowable.bpmn.model.BpmnModel;
 import org.flowable.bpmn.model.FlowElement;
 import org.flowable.engine.HistoryService;
 import org.flowable.engine.ManagementService;
-import org.flowable.engine.ProcessEngine;
 import org.flowable.engine.RepositoryService;
 import org.flowable.engine.RuntimeService;
 import org.flowable.engine.repository.ProcessDefinition;
@@ -68,13 +69,12 @@ public class JobEnrichmentController {
       RepositoryService repositoryService,
       RuntimeService runtimeService,
       HistoryService historyService,
-      ProcessEngine processEngine) {
+      DataSource dataSource) {
     this.managementService = managementService;
     this.repositoryService = repositoryService;
     this.runtimeService = runtimeService;
     this.historyService = historyService;
-    this.jdbcTemplate =
-        new JdbcTemplate(processEngine.getProcessEngineConfiguration().getDataSource());
+    this.jdbcTemplate = new JdbcTemplate(dataSource);
   }
 
   @GetMapping("/{id}")
@@ -119,7 +119,7 @@ public class JobEnrichmentController {
         job.getCreateTime() != null ? job.getCreateTime().toInstant() : null,
         job.getRetries(),
         loadConfiguredRetries(job.getProcessDefinitionId(), job.getElementId()),
-        extractExceptionClass(stackTrace),
+        StackTraces.extractExceptionClass(stackTrace),
         job.getExceptionMessage(),
         stackTrace,
         lock.owner(),
@@ -218,15 +218,6 @@ public class JobEnrichmentController {
     return element != null ? element.getName() : null;
   }
 
-  private static String extractExceptionClass(String stackTrace) {
-    if (stackTrace == null || stackTrace.isBlank()) {
-      return null;
-    }
-    String firstLine = stackTrace.lines().findFirst().orElse("");
-    int colonIndex = firstLine.indexOf(':');
-    return colonIndex > 0 ? firstLine.substring(0, colonIndex).trim() : firstLine.trim();
-  }
-
   private List<EngineJobDto.Attempt> loadAttempts(String jobId) {
     return jdbcTemplate.query(
         "SELECT ATTEMPT_AT, OUTCOME, WORKER, EXCEPTION_MESSAGE FROM FLOWTRACE_JOB_ATTEMPT"
@@ -235,7 +226,7 @@ public class JobEnrichmentController {
             new EngineJobDto.Attempt(
                 rs.getTimestamp("ATTEMPT_AT").toInstant(),
                 null,
-                rs.getString("OUTCOME").toLowerCase(java.util.Locale.ROOT),
+                rs.getString("OUTCOME").toLowerCase(Locale.ROOT),
                 rs.getString("WORKER"),
                 rs.getString("EXCEPTION_MESSAGE")),
         jobId);

@@ -92,9 +92,14 @@ public class FlowTraceAutoConfiguration {
    */
   @Bean
   public FlowTraceSchemaMigration flowTraceSchemaMigration() {
-    DataSource dataSource = processEngine.getProcessEngineConfiguration().getDataSource();
+    DataSource dataSource = engineDataSource();
     FlowTraceSchemaInitializer.migrate(dataSource);
     return new FlowTraceSchemaMigration(dataSource);
+  }
+
+  /** The exact DataSource the existing ProcessEngine already uses - see decision in §5. */
+  private DataSource engineDataSource() {
+    return processEngine.getProcessEngineConfiguration().getDataSource();
   }
 
   /**
@@ -170,7 +175,7 @@ public class FlowTraceAutoConfiguration {
   @Bean
   public DeploymentEnrichmentController flowTraceDeploymentEnrichmentController(
       RepositoryService repositoryService) {
-    return new DeploymentEnrichmentController(repositoryService, processEngine);
+    return new DeploymentEnrichmentController(repositoryService, engineDataSource());
   }
 
   @Bean
@@ -191,7 +196,7 @@ public class FlowTraceAutoConfiguration {
       RuntimeService runtimeService,
       HistoryService historyService) {
     return new JobEnrichmentController(
-        managementService, repositoryService, runtimeService, historyService, processEngine);
+        managementService, repositoryService, runtimeService, historyService, engineDataSource());
   }
 
   @Bean
@@ -207,7 +212,7 @@ public class FlowTraceAutoConfiguration {
         taskService,
         historyService,
         managementService,
-        processEngine);
+        engineDataSource());
   }
 
   @EventListener(ContextRefreshedEvent.class)

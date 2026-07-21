@@ -1,6 +1,7 @@
 package io.github.ghiloufibg.flowable.rest;
 
 import io.github.ghiloufibg.flowable.rest.dto.JobHealthDto;
+import java.time.Instant;
 import java.util.Comparator;
 import java.util.Date;
 import java.util.Objects;
@@ -28,7 +29,7 @@ public class JobHealthController {
     long dead = managementService.createDeadLetterJobQuery().count();
     long locked = managementService.createJobQuery().locked().count();
 
-    java.time.Instant nextTimerDue =
+    Instant nextTimerDue =
         managementService.createTimerJobQuery().list().stream()
             .map(Job::getDuedate)
             .filter(Objects::nonNull)
@@ -36,7 +37,7 @@ public class JobHealthController {
             .map(Date::toInstant)
             .orElse(null);
 
-    java.time.Instant oldestAsyncCreated =
+    Instant oldestAsyncCreated =
         managementService.createJobQuery().list().stream()
             .map(Job::getCreateTime)
             .filter(Objects::nonNull)

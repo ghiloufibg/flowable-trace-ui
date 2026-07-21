@@ -394,7 +394,7 @@ class EnrichmentControllersIntegrationTest {
             FlowableEngineEventType.PROCESS_STARTED);
 
     deploymentController =
-        new DeploymentEnrichmentController(processEngine.getRepositoryService(), processEngine);
+        new DeploymentEnrichmentController(processEngine.getRepositoryService(), dataSource);
     definitionController = new DefinitionEnrichmentController(processEngine.getRepositoryService());
     instanceController =
         new InstanceEnrichmentController(
@@ -403,14 +403,14 @@ class EnrichmentControllersIntegrationTest {
             processEngine.getTaskService(),
             processEngine.getHistoryService(),
             processEngine.getManagementService(),
-            processEngine);
+            dataSource);
     jobController =
         new JobEnrichmentController(
             processEngine.getManagementService(),
             processEngine.getRepositoryService(),
             processEngine.getRuntimeService(),
             processEngine.getHistoryService(),
-            processEngine);
+            dataSource);
     jobHealthController = new JobHealthController(processEngine.getManagementService());
   }
 
@@ -924,7 +924,7 @@ class EnrichmentControllersIntegrationTest {
             fullHistoryEngine.getTaskService(),
             fullHistoryEngine.getHistoryService(),
             fullHistoryEngine.getManagementService(),
-            fullHistoryEngine);
+            fullHistoryEngine.getProcessEngineConfiguration().getDataSource());
 
     fullHistoryEngine
         .getRepositoryService()

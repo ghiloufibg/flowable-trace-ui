@@ -34,12 +34,12 @@ class FlowTraceSchemaInitializerTest {
   }
 
   /**
-   * The exact regression this class exists to avoid: Flyway refuses to touch a schema that
-   * already has unrecognized tables and no schema history table yet ({@code Found non-empty
-   * schema "PUBLIC" but no schema history table}) - reproduced for real against Flowable's own
-   * ACT_/FLW_ tables in Phase 3, and the reason Flyway was rejected entirely before {@code
-   * baselineOnMigrate} was adopted. This simulates that pre-existing, unrelated schema state
-   * without needing a real Flowable engine.
+   * The exact regression this class exists to avoid: Flyway refuses to touch a schema that already
+   * has unrecognized tables and no schema history table yet ({@code Found non-empty schema "PUBLIC"
+   * but no schema history table}) - reproduced for real against Flowable's own ACT_/FLW_ tables in
+   * Phase 3, and the reason Flyway was rejected entirely before {@code baselineOnMigrate} was
+   * adopted. This simulates that pre-existing, unrelated schema state without needing a real
+   * Flowable engine.
    */
   @Test
   void migratesOntoASchemaThatAlreadyHasUnrelatedPreExistingTables() throws Exception {

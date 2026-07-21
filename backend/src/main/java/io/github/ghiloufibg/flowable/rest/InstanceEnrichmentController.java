@@ -2,6 +2,7 @@ package io.github.ghiloufibg.flowable.rest;
 
 import io.github.ghiloufibg.flowable.rest.dto.ProcessInstanceDto;
 import io.github.ghiloufibg.flowable.rest.dto.ProcessInstanceSummaryDto;
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -12,6 +13,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
+import javax.sql.DataSource;
 import org.flowable.bpmn.model.Activity;
 import org.flowable.bpmn.model.BoundaryEvent;
 import org.flowable.bpmn.model.BpmnModel;
@@ -31,7 +33,6 @@ import org.flowable.bpmn.model.TimerEventDefinition;
 import org.flowable.bpmn.model.UserTask;
 import org.flowable.engine.HistoryService;
 import org.flowable.engine.ManagementService;
-import org.flowable.engine.ProcessEngine;
 import org.flowable.engine.RepositoryService;
 import org.flowable.engine.RuntimeService;
 import org.flowable.engine.TaskService;
@@ -121,14 +122,13 @@ public class InstanceEnrichmentController {
       TaskService taskService,
       HistoryService historyService,
       ManagementService managementService,
-      ProcessEngine processEngine) {
+      DataSource dataSource) {
     this.repositoryService = repositoryService;
     this.runtimeService = runtimeService;
     this.taskService = taskService;
     this.historyService = historyService;
     this.managementService = managementService;
-    this.jdbcTemplate =
-        new JdbcTemplate(processEngine.getProcessEngineConfiguration().getDataSource());
+    this.jdbcTemplate = new JdbcTemplate(dataSource);
   }
 
   @GetMapping("/{id}")
@@ -395,7 +395,7 @@ public class InstanceEnrichmentController {
       byActivityId.put(
           job.getElementId(),
           new ProcessInstanceDto.JobError(
-              extractExceptionClass(stackTrace),
+              StackTraces.extractExceptionClass(stackTrace),
               job.getExceptionMessage(),
               stackTrace,
               job.getRetries()));
@@ -413,7 +413,7 @@ public class InstanceEnrichmentController {
       byActivityId.putIfAbsent(
           job.getElementId(),
           new ProcessInstanceDto.JobError(
-              extractExceptionClass(stackTrace),
+              StackTraces.extractExceptionClass(stackTrace),
               job.getExceptionMessage(),
               stackTrace,
               job.getRetries()));
@@ -568,8 +568,7 @@ public class InstanceEnrichmentController {
     Map<String, Instant> byFlowId = new HashMap<>();
     for (Map<String, Object> row : rows) {
       byFlowId.put(
-          (String) row.get("SEQUENCE_FLOW_ID"),
-          ((java.sql.Timestamp) row.get("TAKEN_AT")).toInstant());
+          (String) row.get("SEQUENCE_FLOW_ID"), ((Timestamp) row.get("TAKEN_AT")).toInstant());
     }
     return byFlowId;
   }
@@ -748,7 +747,7 @@ public class InstanceEnrichmentController {
     int revision = 1;
     for (Map<String, Object> row : rows) {
       String newValue = (String) row.get("VARIABLE_VALUE");
-      Instant timestamp = ((java.sql.Timestamp) row.get("CHANGED_AT")).toInstant();
+      Instant timestamp = ((Timestamp) row.get("CHANGED_AT")).toInstant();
       history.add(
           new ProcessInstanceDto.VariableChange(timestamp, revision++, previousValue, newValue));
       previousValue = newValue;
@@ -797,7 +796,7 @@ public class InstanceEnrichmentController {
     return historicActivities.stream()
         .sorted((a, b) -> a.getStartTime().compareTo(b.getStartTime()))
         .map(this::toTrailEntry)
-        .filter(java.util.Objects::nonNull)
+        .filter(Objects::nonNull)
         .toList();
   }
 
@@ -862,14 +861,5 @@ public class InstanceEnrichmentController {
         job.getDuedate() != null ? job.getDuedate().toInstant() : null,
         job.getRetries(),
         job.getExceptionMessage());
-  }
-
-  private static String extractExceptionClass(String stackTrace) {
-    if (stackTrace == null || stackTrace.isBlank()) {
-      return null;
-    }
-    String firstLine = stackTrace.lines().findFirst().orElse("");
-    int colonIndex = firstLine.indexOf(':');
-    return colonIndex > 0 ? firstLine.substring(0, colonIndex).trim() : firstLine.trim();
   }
 }

@@ -28,14 +28,14 @@ public class AuditRepository {
         "INSERT INTO FLOWTRACE_VARIABLE_HISTORY "
             + "(ID, PROCESS_INSTANCE_ID, EXECUTION_ID, VARIABLE_NAME, VARIABLE_TYPE,"
             + " VARIABLE_VALUE, CHANGE_TYPE, CHANGED_AT) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        UUID.randomUUID().toString(),
+        newId(),
         processInstanceId,
         executionId,
         variableName,
         variableType,
         variableValue,
         changeType,
-        Timestamp.from(Instant.now()));
+        now());
   }
 
   public void recordJobAttempt(
@@ -49,10 +49,10 @@ public class AuditRepository {
         "INSERT INTO FLOWTRACE_JOB_ATTEMPT "
             + "(ID, JOB_ID, PROCESS_INSTANCE_ID, ATTEMPT_AT, OUTCOME, EXCEPTION_MESSAGE,"
             + " RETRIES_LEFT, WORKER) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        UUID.randomUUID().toString(),
+        newId(),
         jobId,
         processInstanceId,
-        Timestamp.from(Instant.now()),
+        now(),
         outcome,
         exceptionMessage,
         retriesLeft,
@@ -63,20 +63,28 @@ public class AuditRepository {
     jdbcTemplate.update(
         "INSERT INTO FLOWTRACE_SEQUENCE_FLOW_TAKEN "
             + "(ID, PROCESS_INSTANCE_ID, SEQUENCE_FLOW_ID, TAKEN_AT) VALUES (?, ?, ?, ?)",
-        UUID.randomUUID().toString(),
+        newId(),
         processInstanceId,
         sequenceFlowId,
-        Timestamp.from(Instant.now()));
+        now());
   }
 
   public void recordDeploymentActivity(String deploymentId, String kind, String detail) {
     jdbcTemplate.update(
         "INSERT INTO FLOWTRACE_DEPLOYMENT_ACTIVITY "
             + "(ID, DEPLOYMENT_ID, KIND, DETAIL, OCCURRED_AT) VALUES (?, ?, ?, ?, ?)",
-        UUID.randomUUID().toString(),
+        newId(),
         deploymentId,
         kind,
         detail,
-        Timestamp.from(Instant.now()));
+        now());
+  }
+
+  private static String newId() {
+    return UUID.randomUUID().toString();
+  }
+
+  private static Timestamp now() {
+    return Timestamp.from(Instant.now());
   }
 }

@@ -6,7 +6,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.stream.Stream;
-import org.flowable.engine.ProcessEngine;
+import javax.sql.DataSource;
 import org.flowable.engine.RepositoryService;
 import org.flowable.engine.repository.Deployment;
 import org.flowable.engine.repository.ProcessDefinition;
@@ -61,10 +61,9 @@ public class DeploymentEnrichmentController {
   private final JdbcTemplate jdbcTemplate;
 
   public DeploymentEnrichmentController(
-      RepositoryService repositoryService, ProcessEngine processEngine) {
+      RepositoryService repositoryService, DataSource dataSource) {
     this.repositoryService = repositoryService;
-    this.jdbcTemplate =
-        new JdbcTemplate(processEngine.getProcessEngineConfiguration().getDataSource());
+    this.jdbcTemplate = new JdbcTemplate(dataSource);
   }
 
   @GetMapping("/{id}")
