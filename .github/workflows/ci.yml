@@ -88,6 +88,8 @@ jobs:
 
   dependency-check:
     runs-on: ubuntu-latest
+    env:
+      NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
     steps:
       - uses: actions/checkout@v4
 
@@ -113,13 +115,11 @@ jobs:
           restore-keys: nvd-data-
 
       - name: Warn if NVD_API_KEY is not configured
-        if: ${{ secrets.NVD_API_KEY == '' }}
+        if: ${{ env.NVD_API_KEY == '' }}
         run: |
-          echo "::warning::NVD_API_KEY secret is not set - this scan will be slow and may hit NVD rate limits. See README's Development section for the one-time setup step."
+          echo "::warning::NVD_API_KEY secret is not set - this scan will be slow and may hit NVD rate limits. See claudedocs/dependency-vulnerability-scanning.md for the one-time setup step."
 
       - name: Run OWASP dependency-check (Java dependencies)
-        env:
-          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
         run: mvn -B org.owasp:dependency-check-maven:aggregate
 
       - name: Upload dependency-check report
