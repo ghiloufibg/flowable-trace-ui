@@ -1,27 +1,41 @@
 /**
  * HTTP-backed DefinitionRepository.
  *
- * Definitions come from Flowable REST /repository/process-definitions. The
- * grouping/aggregation helpers (versions, active counts, template instance)
- * are backed by /custom/* endpoints since Flowable REST doesn't expose them
- * directly.
+ * ProcessDefinitions come from Flowable REST /repository/process-definitions,
+ * which already carries key/version/name/tenantId/suspended directly - real
+ * fields, not a summary-endpoint invention. `ensureDefinition` is a lazy
+ * fallback for deep links to a version that wasn't part of the last
+ * hydrated list.
+ *
+ * The "template instance" (used to render a diagram on the definition
+ * detail page) is lazy too: it lives on the instance repository's detail
+ * cache, fetched via `instances.ensureInstance` through
+ * `ensureTemplateInstance`.
  */
 
 import type { DefinitionRepository } from "@/lib/store";
+import { notifyStoreChanged } from "@/lib/store";
 import type { ProcessDefinition, ProcessInstance } from "@/lib/types";
 import { customClient, flowableClient } from "@/lib/api/client";
-import type { FlowableList, FlowableProcessDefinitionDTO } from "@/lib/api/flowable-mappers";
+import {
+  mapProcessDefinition,
+  type FlowableList,
+  type FlowableProcessDefinitionDTO,
+} from "@/lib/api/flowable-mappers";
 import type { HttpInstanceRepository } from "@/lib/repositories/http-instance";
 
 export class HttpDefinitionRepository implements DefinitionRepository {
   private all: ProcessDefinition[] = [];
+  private detailInFlight = new Map<string, Promise<ProcessDefinition>>();
+  private templateInFlight = new Map<string, Promise<ProcessInstance | undefined>>();
 
   constructor(
-    private readonly instances: Pick<HttpInstanceRepository, "listInstances" | "getInstance">,
+    private readonly instances: Pick<HttpInstanceRepository, "listInstances" | "getInstance" | "ensureInstance">,
   ) {}
 
   seed(items: ProcessDefinition[]): void {
     this.all = items;
+    notifyStoreChanged();
   }
 
   listDefinitions(): ProcessDefinition[] {
@@ -41,6 +55,28 @@ export class HttpDefinitionRepository implements DefinitionRepository {
     return this.all.find((d) => d.key === key && d.version === version);
   }
 
+  async ensureDefinition(key: string, version: number): Promise<ProcessDefinition> {
+    const cached = this.getDefinition(key, version);
+    if (cached) return cached;
+    const cacheKey = `${key}/${version}`;
+    const existing = this.detailInFlight.get(cacheKey);
+    if (existing) return existing;
+    const p = customClient
+      .get<ProcessDefinition>(`definitions/${key}/${version}`)
+      .then((def) => {
+        if (!this.getDefinition(def.key, def.version)) this.all.push(def);
+        this.detailInFlight.delete(cacheKey);
+        notifyStoreChanged();
+        return def;
+      })
+      .catch((err) => {
+        this.detailInFlight.delete(cacheKey);
+        throw err;
+      });
+    this.detailInFlight.set(cacheKey, p);
+    return p;
+  }
+
   instancesForDefinition(key: string, version?: number): ProcessInstance[] {
     return this.instances
       .listInstances()
@@ -56,7 +92,34 @@ export class HttpDefinitionRepository implements DefinitionRepository {
   }
 
   templateInstanceFor(key: string, version: number): ProcessInstance | undefined {
-    return this.instancesForDefinition(key, version)[0] ?? this.instancesForDefinition(key)[0];
+    const candidate =
+      this.instancesForDefinition(key, version)[0] ?? this.instancesForDefinition(key)[0];
+    if (!candidate) return undefined;
+    // Prefer the full detail if it's already cached - a summary-only object
+    // won't have nodes/edges, and the diagram needs them.
+    const full = this.instances.getInstance(candidate.id);
+    return full && full.nodes.length > 0 ? full : candidate;
+  }
+
+  async ensureTemplateInstance(key: string, version: number): Promise<ProcessInstance | undefined> {
+    const candidate =
+      this.instancesForDefinition(key, version)[0] ?? this.instancesForDefinition(key)[0];
+    if (!candidate) return undefined;
+    const cacheKey = `${key}/${version}/${candidate.id}`;
+    const existing = this.templateInFlight.get(cacheKey);
+    if (existing) return existing;
+    const p = this.instances
+      .ensureInstance(candidate.id)
+      .then((full) => {
+        this.templateInFlight.delete(cacheKey);
+        return full;
+      })
+      .catch((err) => {
+        this.templateInFlight.delete(cacheKey);
+        throw err;
+      });
+    this.templateInFlight.set(cacheKey, p);
+    return p;
   }
 
   async hydrate(): Promise<void> {
@@ -64,14 +127,23 @@ export class HttpDefinitionRepository implements DefinitionRepository {
       "repository/process-definitions",
     );
     const next: ProcessDefinition[] = [];
-    await Promise.all(
-      list.data.map(async (dto) => {
-        const domain = await customClient.get<ProcessDefinition>(
-          `definitions/${dto.key}/${dto.version}`,
-        );
-        next.push(domain);
-      }),
-    );
+    const needsFallback: FlowableProcessDefinitionDTO[] = [];
+    for (const dto of list.data) {
+      const domain = mapProcessDefinition(dto);
+      if (domain) next.push(domain);
+      else needsFallback.push(dto);
+    }
+    if (needsFallback.length > 0) {
+      const results = await Promise.all(
+        needsFallback.map((dto) =>
+          customClient
+            .get<ProcessDefinition>(`definitions/${dto.key}/${dto.version}`)
+            .catch(() => undefined),
+        ),
+      );
+      for (const def of results) if (def) next.push(def);
+    }
     this.all = next;
+    notifyStoreChanged();
   }
 }

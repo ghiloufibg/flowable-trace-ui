@@ -7,7 +7,15 @@
  * /custom/* enrichment endpoint for the full domain object; these interfaces only carry the
  * fields repositories need to construct that follow-up request (id, or key+version), plus the
  * rest of the real shape for documentation.
+ *
+ * `_domain` is an optional escape hatch: if a future backend summary endpoint embeds the full
+ * mapped domain object directly on the list DTO, repositories pick it up for free and skip the
+ * per-id enrichment call. No real Flowable REST response sets this today - every `map*` below
+ * returns `undefined` against the real backend, which is the correct, intentional behavior
+ * until that summary endpoint exists (see claudedocs/known-limitations.md).
  */
+
+import type { Deployment, EngineJob, ProcessDefinition, ProcessInstance } from "@/lib/types";
 
 export interface FlowableList<T> {
   data: T[];
@@ -36,6 +44,7 @@ export interface FlowableProcessInstanceDTO {
   superProcessInstanceId?: string;
   tenantId?: string;
   completed: boolean;
+  _domain?: ProcessInstance;
 }
 
 export interface FlowableDeploymentDTO {
@@ -46,6 +55,7 @@ export interface FlowableDeploymentDTO {
   parentDeploymentId?: string;
   url: string;
   tenantId?: string;
+  _domain?: Deployment;
 }
 
 export interface FlowableProcessDefinitionDTO {
@@ -64,6 +74,7 @@ export interface FlowableProcessDefinitionDTO {
   graphicalNotationDefined: boolean;
   suspended: boolean;
   startFormDefined: boolean;
+  _domain?: ProcessDefinition;
 }
 
 export interface FlowableJobDTO {
@@ -86,4 +97,25 @@ export interface FlowableJobDTO {
   lockOwner?: string;
   lockExpirationTime?: string;
   tenantId?: string;
+  _domain?: EngineJob;
+}
+
+/**
+ * Pass through `_domain` when a list DTO carries it (a future summary endpoint), otherwise
+ * `undefined` so the caller falls back to per-id enrichment. See the module doc comment.
+ */
+export function mapProcessInstance(dto: FlowableProcessInstanceDTO): ProcessInstance | undefined {
+  return dto._domain;
+}
+
+export function mapDeployment(dto: FlowableDeploymentDTO): Deployment | undefined {
+  return dto._domain;
+}
+
+export function mapProcessDefinition(dto: FlowableProcessDefinitionDTO): ProcessDefinition | undefined {
+  return dto._domain;
+}
+
+export function mapJob(dto: FlowableJobDTO): EngineJob | undefined {
+  return dto._domain;
 }

@@ -1,35 +1,73 @@
 /**
- * HTTP-backed DeploymentRepository — synchronous reads against an in-memory
- * cache, async hydrate() against Flowable REST + custom enrichment.
+ * HTTP-backed DeploymentRepository.
+ *
+ * Same summary/detail split as HttpInstanceRepository (see its doc comment):
+ * `summaries` from hydrate()'s list call, `details` filled lazily by
+ * ensureDeployment(id), preserved across hydrate() calls. No real backend
+ * summary endpoint exists yet, so every id currently takes the per-id
+ * enrichment fallback - same request this repository always made, just
+ * restructured to warm-cache details and give deep links a fetch path.
  */
 
 import type { DeploymentRepository } from "@/lib/store";
+import { notifyStoreChanged } from "@/lib/store";
 import type { Deployment, ProcessInstance } from "@/lib/types";
 import { customClient, flowableClient } from "@/lib/api/client";
-import type { FlowableList, FlowableDeploymentDTO } from "@/lib/api/flowable-mappers";
+import {
+  mapDeployment,
+  type FlowableList,
+  type FlowableDeploymentDTO,
+} from "@/lib/api/flowable-mappers";
 import type { HttpInstanceRepository } from "@/lib/repositories/http-instance";
 
 export class HttpDeploymentRepository implements DeploymentRepository {
-  private byId = new Map<string, Deployment>();
+  private summaries = new Map<string, Deployment>();
+  private details = new Map<string, Deployment>();
+  private inFlight = new Map<string, Promise<Deployment>>();
   private order: string[] = [];
 
   constructor(private readonly instances: Pick<HttpInstanceRepository, "listInstances">) {}
 
   seed(items: Deployment[]): void {
-    this.byId.clear();
+    this.summaries.clear();
+    this.details.clear();
     this.order = [];
     for (const d of items) {
-      this.byId.set(d.id, d);
+      this.details.set(d.id, d);
       this.order.push(d.id);
     }
+    notifyStoreChanged();
   }
 
   listDeployments(): Deployment[] {
-    return this.order.map((id) => this.byId.get(id)!).filter(Boolean);
+    return this.order
+      .map((id) => this.details.get(id) ?? this.summaries.get(id)!)
+      .filter(Boolean);
   }
 
   getDeployment(id: string): Deployment | undefined {
-    return this.byId.get(id);
+    return this.details.get(id) ?? this.summaries.get(id);
+  }
+
+  async ensureDeployment(id: string): Promise<Deployment> {
+    const cached = this.details.get(id);
+    if (cached) return cached;
+    const existing = this.inFlight.get(id);
+    if (existing) return existing;
+    const p = customClient
+      .get<Deployment>(`deployments/${id}`)
+      .then((full) => {
+        this.details.set(id, full);
+        this.inFlight.delete(id);
+        notifyStoreChanged();
+        return full;
+      })
+      .catch((err) => {
+        this.inFlight.delete(id);
+        throw err;
+      });
+    this.inFlight.set(id, p);
+    return p;
   }
 
   activeInstanceCount(d: Deployment): number {
@@ -49,18 +87,31 @@ export class HttpDeploymentRepository implements DeploymentRepository {
     const list =
       await flowableClient.get<FlowableList<FlowableDeploymentDTO>>("repository/deployments");
 
-    const nextOrder: string[] = [];
-    const nextMap = new Map<string, Deployment>();
+    const nextOrder: string[] = list.data.map((d) => d.id);
+    const nextSummaries = new Map<string, Deployment>();
+    const needsFallback: string[] = [];
+    for (const dto of list.data) {
+      const summary = mapDeployment(dto);
+      if (summary) nextSummaries.set(dto.id, summary);
+      else needsFallback.push(dto.id);
+    }
 
-    await Promise.all(
-      list.data.map(async (dto) => {
-        nextOrder.push(dto.id);
-        const domain = await customClient.get<Deployment>(`deployments/${dto.id}`);
-        nextMap.set(dto.id, domain);
-      }),
-    );
+    if (needsFallback.length > 0) {
+      const results = await Promise.all(
+        needsFallback.map((id) =>
+          customClient.get<Deployment>(`deployments/${id}`).catch(() => undefined),
+        ),
+      );
+      results.forEach((full, i) => {
+        if (!full) return;
+        const id = needsFallback[i];
+        nextSummaries.set(id, full);
+        this.details.set(id, full);
+      });
+    }
 
-    this.byId = nextMap;
+    this.summaries = nextSummaries;
     this.order = nextOrder;
+    notifyStoreChanged();
   }
 }

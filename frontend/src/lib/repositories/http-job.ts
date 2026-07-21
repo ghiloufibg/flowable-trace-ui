@@ -4,14 +4,23 @@
  *
  * The list is assembled from all three of Flowable's job query endpoints
  * (async/executable, timer, dead-letter) since each lives under a separate
- * REST resource. The per-id enrichment call (`custom/jobs/{id}`) already
- * type-detects across all three tables, so it's reused unchanged here.
+ * REST resource. Same summary/detail split as the other repositories: no
+ * real backend summary endpoint exists yet, so every id currently takes the
+ * per-id enrichment fallback (`custom/jobs/{id}`, which already
+ * type-detects across all three tables) - the same request this repository
+ * always made, restructured to warm-cache details and support
+ * ensureJob(id) for deep links.
  */
 
 import type { JobRepository } from "@/lib/store";
+import { notifyStoreChanged } from "@/lib/store";
 import type { EngineJob } from "@/lib/types";
 import { customClient, flowableClient } from "@/lib/api/client";
-import type { FlowableList, FlowableJobDTO } from "@/lib/api/flowable-mappers";
+import {
+  mapJob,
+  type FlowableList,
+  type FlowableJobDTO,
+} from "@/lib/api/flowable-mappers";
 
 type JobHealth = ReturnType<JobRepository["jobHealth"]>;
 
@@ -23,18 +32,22 @@ const EMPTY_HEALTH: JobHealth = {
 };
 
 export class HttpJobRepository implements JobRepository {
-  private byId = new Map<string, EngineJob>();
+  private summaries = new Map<string, EngineJob>();
+  private details = new Map<string, EngineJob>();
+  private inFlight = new Map<string, Promise<EngineJob>>();
   private order: string[] = [];
   private health: JobHealth = EMPTY_HEALTH;
 
   seed(items: EngineJob[]): void {
-    this.byId.clear();
+    this.summaries.clear();
+    this.details.clear();
     this.order = [];
     for (const j of items) {
-      this.byId.set(j.id, j);
+      this.details.set(j.id, j);
       this.order.push(j.id);
     }
     this.recomputeHealth();
+    notifyStoreChanged();
   }
 
   private recomputeHealth(): void {
@@ -60,11 +73,34 @@ export class HttpJobRepository implements JobRepository {
   }
 
   listJobs(): EngineJob[] {
-    return this.order.map((id) => this.byId.get(id)!).filter(Boolean);
+    return this.order
+      .map((id) => this.details.get(id) ?? this.summaries.get(id)!)
+      .filter(Boolean);
   }
 
   getJob(id: string): EngineJob | undefined {
-    return this.byId.get(id);
+    return this.details.get(id) ?? this.summaries.get(id);
+  }
+
+  async ensureJob(id: string): Promise<EngineJob> {
+    const cached = this.details.get(id);
+    if (cached) return cached;
+    const existing = this.inFlight.get(id);
+    if (existing) return existing;
+    const p = customClient
+      .get<EngineJob>(`jobs/${id}`)
+      .then((full) => {
+        this.details.set(id, full);
+        this.inFlight.delete(id);
+        notifyStoreChanged();
+        return full;
+      })
+      .catch((err) => {
+        this.inFlight.delete(id);
+        throw err;
+      });
+    this.inFlight.set(id, p);
+    return p;
   }
 
   jobsForInstance(instanceId: string): EngineJob[] {
@@ -85,22 +121,32 @@ export class HttpJobRepository implements JobRepository {
       flowableClient.get<FlowableList<FlowableJobDTO>>("management/timer-jobs"),
       flowableClient.get<FlowableList<FlowableJobDTO>>("management/deadletter-jobs"),
     ]);
-    const ids = [
-      ...asyncJobs.data.map((d) => d.id),
-      ...timerJobs.data.map((d) => d.id),
-      ...deadLetterJobs.data.map((d) => d.id),
-    ];
+    const dtos = [...asyncJobs.data, ...timerJobs.data, ...deadLetterJobs.data];
+    const nextOrder = dtos.map((d) => d.id);
 
-    const nextOrder: string[] = [];
-    const nextMap = new Map<string, EngineJob>();
-    await Promise.all(
-      ids.map(async (id) => {
-        nextOrder.push(id);
-        const domain = await customClient.get<EngineJob>(`jobs/${id}`);
-        nextMap.set(id, domain);
-      }),
-    );
-    this.byId = nextMap;
+    const nextSummaries = new Map<string, EngineJob>();
+    const needsFallback: string[] = [];
+    for (const dto of dtos) {
+      const summary = mapJob(dto);
+      if (summary) nextSummaries.set(dto.id, summary);
+      else needsFallback.push(dto.id);
+    }
+
+    if (needsFallback.length > 0) {
+      const results = await Promise.all(
+        needsFallback.map((id) =>
+          customClient.get<EngineJob>(`jobs/${id}`).catch(() => undefined),
+        ),
+      );
+      results.forEach((full, i) => {
+        if (!full) return;
+        const id = needsFallback[i];
+        nextSummaries.set(id, full);
+        this.details.set(id, full);
+      });
+    }
+
+    this.summaries = nextSummaries;
     this.order = nextOrder;
 
     try {
@@ -117,5 +163,6 @@ export class HttpJobRepository implements JobRepository {
       // Fallback: derive locally if the custom endpoint is unavailable.
       this.recomputeHealth();
     }
+    notifyStoreChanged();
   }
 }

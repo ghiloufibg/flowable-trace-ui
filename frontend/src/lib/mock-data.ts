@@ -120,6 +120,18 @@ export interface ProcessInstance {
   tasks: TaskItem[];
   trail: TrailEntry[];
   jobs: JobItem[];
+  /**
+   * Summary-only: cheap subset of `nodes` a list-endpoint response can carry
+   * so rows render without a per-id enrichment fetch. Undefined on full
+   * detail responses; callers prefer this when present and fall back to
+   * filtering `nodes` (see `currentActivities` in store.ts).
+   */
+  activeActivities?: BpmnNode[];
+  /**
+   * Summary-only: precomputed dead-letter job count. Undefined on full
+   * detail responses; callers fall back to filtering `jobs`.
+   */
+  failedJobCount?: number;
 }
 
 // -- helpers ---------------------------------------------------------------

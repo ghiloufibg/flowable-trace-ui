@@ -1,11 +1,11 @@
 import { createFileRoute, Link, notFound, useRouter } from "@tanstack/react-router";
 import { AppShell } from "@/components/app-shell";
 import { RelTime } from "@/components/rel-time";
-import { getJob, jobsForInstance, type EngineJob } from "@/lib/store";
+import { ensureJob, jobsForInstance, type EngineJob } from "@/lib/store";
 
 export const Route = createFileRoute("/jobs/$id")({
-  loader: ({ params }) => {
-    const job = getJob(params.id);
+  loader: async ({ params }) => {
+    const job = await ensureJob(params.id);
     if (!job) throw notFound();
     return { job };
   },

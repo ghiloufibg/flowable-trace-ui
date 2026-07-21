@@ -2,11 +2,11 @@ import { createFileRoute, Link, notFound, useRouter } from "@tanstack/react-rout
 import { useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { RelTime } from "@/components/rel-time";
-import { activeCountForDefinition, activeInstanceCount, formatBytes, getDeployment, type Deployment, type DeploymentResource } from "@/lib/store";
+import { activeCountForDefinition, activeInstanceCount, ensureDeployment, formatBytes, type Deployment, type DeploymentResource } from "@/lib/store";
 
 export const Route = createFileRoute("/deployments/$id")({
-  loader: ({ params }) => {
-    const dep = getDeployment(params.id);
+  loader: async ({ params }) => {
+    const dep = await ensureDeployment(params.id);
     if (!dep) throw notFound();
     return { dep };
   },

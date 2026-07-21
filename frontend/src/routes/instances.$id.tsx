@@ -9,6 +9,7 @@ import { ReplayControl } from "@/components/replay-control";
 import { RelTime } from "@/components/rel-time";
 import { InstanceTabs, type TabKey } from "@/components/instance-tabs";
 import {
+  ensureInstance,
   failedJobCount,
   getInstance,
   relativeTime,
@@ -16,8 +17,8 @@ import {
 } from "@/lib/store";
 
 export const Route = createFileRoute("/instances/$id")({
-  loader: ({ params }) => {
-    const instance = getInstance(params.id);
+  loader: async ({ params }) => {
+    const instance = await ensureInstance(params.id);
     if (!instance) throw notFound();
     return { instance };
   },

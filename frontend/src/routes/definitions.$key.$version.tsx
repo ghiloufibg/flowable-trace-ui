@@ -6,19 +6,20 @@ import { BpmnXmlDiagram } from "@/components/bpmn-xml-diagram";
 import { processInstanceToBpmnXml } from "@/lib/bpmn-xml";
 import type { ProcessInstance } from "@/lib/store";
 import {
-  getDefinition,
+  ensureDefinition,
+  ensureTemplateInstance,
   instancesForDefinition,
-  templateInstanceFor,
   type ProcessDefinition,
 } from "@/lib/store";
 
 export const Route = createFileRoute("/definitions/$key/$version")({
-  loader: ({ params }) => {
+  loader: async ({ params }) => {
     const version = Number(params.version);
     if (!Number.isFinite(version)) throw notFound();
-    const def = getDefinition(params.key, version);
+    const def = await ensureDefinition(params.key, version);
     if (!def) throw notFound();
-    return { def };
+    const template = await ensureTemplateInstance(params.key, version);
+    return { def, template };
   },
   head: ({ loaderData }) => {
     if (!loaderData) {
@@ -51,9 +52,8 @@ export const Route = createFileRoute("/definitions/$key/$version")({
 type Tab = "overview" | "instances" | "xml";
 
 function DefinitionDetailPage() {
-  const { def } = Route.useLoaderData();
+  const { def, template } = Route.useLoaderData();
   const [tab, setTab] = useState<Tab>("overview");
-  const template = templateInstanceFor(def.key, def.version);
   const instances = instancesForDefinition(def.key, def.version);
   const active = instances.filter((p) => p.status === "active").length;
 

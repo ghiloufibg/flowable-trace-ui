@@ -54,12 +54,14 @@ import type {
 export interface InstanceRepository {
   listInstances(): ProcessInstance[];
   getInstance(id: string): ProcessInstance | undefined;
+  ensureInstance?(id: string): Promise<ProcessInstance>;
 }
 
 export interface DeploymentRepository {
   listDeployments(): Deployment[];
   getDeployment(id: string): Deployment | undefined;
   activeInstanceCount(d: Deployment): number;
+  ensureDeployment?(id: string): Promise<Deployment>;
 }
 
 export interface DefinitionRepository {
@@ -70,6 +72,8 @@ export interface DefinitionRepository {
   activeCountForDefinition(key: string, version?: number): number;
   versionCount(key: string): number;
   templateInstanceFor(key: string, version: number): ProcessInstance | undefined;
+  ensureDefinition?(key: string, version: number): Promise<ProcessDefinition>;
+  ensureTemplateInstance?(key: string, version: number): Promise<ProcessInstance | undefined>;
 }
 
 export interface JobRepository {
@@ -85,6 +89,7 @@ export interface JobRepository {
     nextTimerDue?: string;
     oldestAsyncCreated?: string;
   };
+  ensureJob?(id: string): Promise<EngineJob>;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -129,10 +134,10 @@ let deploymentRepo: DeploymentRepository = mockDeploymentRepository;
 let definitionRepo: DefinitionRepository = mockDefinitionRepository;
 let jobRepo: JobRepository = mockJobRepository;
 
-export function setInstanceRepository(r: InstanceRepository): void { instanceRepo = r; }
-export function setDeploymentRepository(r: DeploymentRepository): void { deploymentRepo = r; }
-export function setDefinitionRepository(r: DefinitionRepository): void { definitionRepo = r; }
-export function setJobRepository(r: JobRepository): void { jobRepo = r; }
+export function setInstanceRepository(r: InstanceRepository): void { instanceRepo = r; notifyStoreChanged(); }
+export function setDeploymentRepository(r: DeploymentRepository): void { deploymentRepo = r; notifyStoreChanged(); }
+export function setDefinitionRepository(r: DefinitionRepository): void { definitionRepo = r; notifyStoreChanged(); }
+export function setJobRepository(r: JobRepository): void { jobRepo = r; notifyStoreChanged(); }
 
 export function getInstanceRepository(): InstanceRepository { return instanceRepo; }
 export function getDeploymentRepository(): DeploymentRepository { return deploymentRepo; }
@@ -185,10 +190,37 @@ function cachedListSnapshot<T>(compute: () => T[]): () => T[] {
   };
 }
 
+/**
+ * Same referential-stability problem as cachedListSnapshot, but for hooks parameterized by a
+ * key (useInstance(id), useDefinition(key, version), ...). Each distinct key gets its own
+ * cached value, invalidated wholesale whenever storeVersion changes.
+ */
+function cachedByKey<T>(compute: (key: string) => T): (key: string) => T {
+  let cachedAtVersion = -1;
+  let cache = new Map<string, T>();
+  return (key: string) => {
+    if (cachedAtVersion !== storeVersion) {
+      cache = new Map();
+      cachedAtVersion = storeVersion;
+    }
+    if (!cache.has(key)) cache.set(key, compute(key));
+    return cache.get(key) as T;
+  };
+}
+
 const getInstancesSnapshot = cachedListSnapshot(() => instanceRepo.listInstances());
 const getDeploymentsSnapshot = cachedListSnapshot(() => deploymentRepo.listDeployments());
 const getDefinitionsSnapshot = cachedListSnapshot(() => definitionRepo.listDefinitions());
 const getJobsSnapshot = cachedListSnapshot(() => jobRepo.listJobs());
+
+const getInstanceByIdSnapshot = cachedByKey((id) => instanceRepo.getInstance(id));
+const getDeploymentByIdSnapshot = cachedByKey((id) => deploymentRepo.getDeployment(id));
+const getJobByIdSnapshot = cachedByKey((id) => jobRepo.getJob(id));
+const getDefinitionVersionsSnapshot = cachedByKey((key) => definitionRepo.listDefinitionVersions(key));
+const getDefinitionByKeyVersionSnapshot = cachedByKey((k) => {
+  const [key, versionRaw] = k.split("@");
+  return definitionRepo.getDefinition(key, Number(versionRaw));
+});
 
 /* -------------------------------------------------------------------------- */
 /* Plain accessors — safe from route loaders and non-React code               */
@@ -220,54 +252,77 @@ export const deadLetterCount = (): number => jobRepo.deadLetterCount();
 export const jobHealth = (): ReturnType<JobRepository["jobHealth"]> => jobRepo.jobHealth();
 
 /* -------------------------------------------------------------------------- */
+/* Async ensure* — resolve full entity detail on demand, falling back to the  */
+/* synchronous get* when a repository doesn't implement lazy loading (e.g.    */
+/* the mock repositories, which are always fully eager).                     */
+/* -------------------------------------------------------------------------- */
+
+export async function ensureInstance(id: string): Promise<ProcessInstance | undefined> {
+  if (instanceRepo.ensureInstance) return instanceRepo.ensureInstance(id);
+  return instanceRepo.getInstance(id);
+}
+export async function ensureDeployment(id: string): Promise<Deployment | undefined> {
+  if (deploymentRepo.ensureDeployment) return deploymentRepo.ensureDeployment(id);
+  return deploymentRepo.getDeployment(id);
+}
+export async function ensureDefinition(key: string, version: number): Promise<ProcessDefinition | undefined> {
+  if (definitionRepo.ensureDefinition) return definitionRepo.ensureDefinition(key, version);
+  return definitionRepo.getDefinition(key, version);
+}
+export async function ensureTemplateInstance(key: string, version: number): Promise<ProcessInstance | undefined> {
+  if (definitionRepo.ensureTemplateInstance) return definitionRepo.ensureTemplateInstance(key, version);
+  return definitionRepo.templateInstanceFor(key, version);
+}
+export async function ensureJob(id: string): Promise<EngineJob | undefined> {
+  if (jobRepo.ensureJob) return jobRepo.ensureJob(id);
+  return jobRepo.getJob(id);
+}
+
+/* -------------------------------------------------------------------------- */
 /* Derived helpers (pure, work off any ProcessInstance)                       */
 /* -------------------------------------------------------------------------- */
 
 export function failedJobCount(p: ProcessInstance): number {
-  return p.jobs.filter((j) => j.type === "deadletter").length;
+  // Prefer the summary-derived count when present (list rows); fall back to
+  // deriving it from the full jobs array on detail responses.
+  return p.failedJobCount ?? p.jobs.filter((j) => j.type === "deadletter").length;
 }
 
 export function currentActivities(p: ProcessInstance): BpmnNode[] {
-  return p.nodes.filter((n) => n.state === "active" || n.state === "failed");
+  // Prefer the summary-derived active-activity subset when present.
+  return p.activeActivities ?? p.nodes.filter((n) => n.state === "active" || n.state === "failed");
 }
 
 /* -------------------------------------------------------------------------- */
 /* React hooks — thin wrappers so components stay decoupled from the source.  */
-/* Subscribed via useSyncExternalStore so a resolved hydrateStore() actually  */
-/* triggers a re-render, instead of only showing up on some unrelated state   */
-/* change (e.g. a route navigation).                                         */
+/* Subscribed via useSyncExternalStore so a resolved hydrateStore()/ensure*() */
+/* actually triggers a re-render, instead of only showing up on some         */
+/* unrelated state change (e.g. a route navigation).                         */
 /* -------------------------------------------------------------------------- */
 
 export const useInstances = (): ProcessInstance[] =>
   useSyncExternalStore(subscribeToStore, getInstancesSnapshot);
 export const useInstance = (id: string | undefined): ProcessInstance | undefined =>
-  useSyncExternalStore(subscribeToStore, () => (id ? instanceRepo.getInstance(id) : undefined));
+  useSyncExternalStore(subscribeToStore, () => (id ? getInstanceByIdSnapshot(id) : undefined));
 
 export const useDeployments = (): Deployment[] =>
   useSyncExternalStore(subscribeToStore, getDeploymentsSnapshot);
 export const useDeployment = (id: string | undefined): Deployment | undefined =>
-  useSyncExternalStore(subscribeToStore, () => (id ? deploymentRepo.getDeployment(id) : undefined));
+  useSyncExternalStore(subscribeToStore, () => (id ? getDeploymentByIdSnapshot(id) : undefined));
 
 export const useDefinitions = (): ProcessDefinition[] =>
   useSyncExternalStore(subscribeToStore, getDefinitionsSnapshot);
 
-const definitionVersionsCache = new Map<string, { version: number; value: ProcessDefinition[] }>();
 export const useDefinitionVersions = (key: string): ProcessDefinition[] =>
-  useSyncExternalStore(subscribeToStore, () => {
-    const entry = definitionVersionsCache.get(key);
-    if (entry && entry.version === storeVersion) return entry.value;
-    const value = definitionRepo.listDefinitionVersions(key);
-    definitionVersionsCache.set(key, { version: storeVersion, value });
-    return value;
-  });
+  useSyncExternalStore(subscribeToStore, () => getDefinitionVersionsSnapshot(key));
 
 export const useDefinition = (key: string, version: number): ProcessDefinition | undefined =>
-  useSyncExternalStore(subscribeToStore, () => definitionRepo.getDefinition(key, version));
+  useSyncExternalStore(subscribeToStore, () => getDefinitionByKeyVersionSnapshot(`${key}@${version}`));
 
 export const useJobs = (): EngineJob[] =>
   useSyncExternalStore(subscribeToStore, getJobsSnapshot);
 export const useJob = (id: string | undefined): EngineJob | undefined =>
-  useSyncExternalStore(subscribeToStore, () => (id ? jobRepo.getJob(id) : undefined));
+  useSyncExternalStore(subscribeToStore, () => (id ? getJobByIdSnapshot(id) : undefined));
 
 /* -------------------------------------------------------------------------- */
 /* Convenience re-exports                                                     */
