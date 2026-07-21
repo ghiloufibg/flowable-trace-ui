@@ -1,4 +1,4 @@
-import { createFileRoute, Link, notFound, useRouter } from "@tanstack/react-router";
+import { createFileRoute, Link, notFound } from "@tanstack/react-router";
 import { useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { RelTime } from "@/components/rel-time";
@@ -42,7 +42,6 @@ type Tab = "definitions" | "resources" | "activity";
 
 function DeploymentDetailPage() {
   const { dep } = Route.useLoaderData();
-  const router = useRouter();
   const [tab, setTab] = useState<Tab>("definitions");
   const [selected, setSelected] = useState<DeploymentResource | null>(dep.resources[0] ?? null);
   const active = activeInstanceCount(dep);
@@ -73,18 +72,9 @@ function DeploymentDetailPage() {
             </div>
             <div className="flex items-center gap-1.5">
               <HeaderBtn onClick={() => navigator.clipboard?.writeText(dep.id)}>Copy ID</HeaderBtn>
-              <HeaderBtn onClick={() => alert("Download would export a .bar archive")}>Download</HeaderBtn>
-              <HeaderBtn onClick={() => alert("Redeploy would open the upload dialog seeded with this bundle")}>Redeploy</HeaderBtn>
-              <HeaderBtn
-                tone="danger"
-                onClick={() => {
-                  if (confirm(`Delete ${dep.name} v${dep.version}? This cannot be undone.`)) {
-                    router.navigate({ to: "/deployments" });
-                  }
-                }}
-              >
-                Delete
-              </HeaderBtn>
+              <HeaderBtn disabled title="Not yet implemented">Download</HeaderBtn>
+              <HeaderBtn disabled title="Not yet implemented">Redeploy</HeaderBtn>
+              <HeaderBtn tone="danger" disabled title="Not yet implemented">Delete</HeaderBtn>
             </div>
           </div>
 
@@ -115,11 +105,13 @@ function DeploymentDetailPage() {
 }
 
 function HeaderBtn({
-  children, onClick, tone,
+  children, onClick, tone, disabled, title,
 }: {
   children: React.ReactNode;
-  onClick: () => void;
+  onClick?: () => void;
   tone?: "danger";
+  disabled?: boolean;
+  title?: string;
 }) {
   const cls =
     tone === "danger"
@@ -128,7 +120,9 @@ function HeaderBtn({
   return (
     <button
       onClick={onClick}
-      className={`rounded border px-2 py-1 text-[11px] transition-colors ${cls}`}
+      disabled={disabled}
+      title={title}
+      className={`rounded border px-2 py-1 text-[11px] transition-colors disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent ${cls}`}
     >
       {children}
     </button>

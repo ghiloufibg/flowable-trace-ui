@@ -1,4 +1,4 @@
-import { createFileRoute, Link, notFound, useRouter } from "@tanstack/react-router";
+import { createFileRoute, Link, notFound } from "@tanstack/react-router";
 import { AppShell } from "@/components/app-shell";
 import { RelTime } from "@/components/rel-time";
 import { ensureJob, jobsForInstance, type EngineJob } from "@/lib/store";
@@ -39,7 +39,6 @@ export const Route = createFileRoute("/jobs/$id")({
 
 function JobDetailPage() {
   const { job } = Route.useLoaderData();
-  const router = useRouter();
   const related = jobsForInstance(job.instanceId).filter((j) => j.id !== job.id);
   const dot =
     job.type === "deadletter" ? "bg-danger" :
@@ -79,20 +78,10 @@ function JobDetailPage() {
               >
                 Open instance
               </Link>
-              <HeaderBtn
-                onClick={() => alert(`Retry ${job.id} — mock action; would reset retries to ${job.maxRetries}.`)}
-                primary
-              >
+              <HeaderBtn primary disabled title="Not yet implemented">
                 Retry now
               </HeaderBtn>
-              <HeaderBtn
-                tone="danger"
-                onClick={() => {
-                  if (confirm(`Delete ${job.id}? This cannot be undone.`)) {
-                    router.navigate({ to: "/jobs" });
-                  }
-                }}
-              >
+              <HeaderBtn tone="danger" disabled title="Not yet implemented">
                 Delete
               </HeaderBtn>
             </div>
@@ -221,12 +210,14 @@ function Row({ k, v }: { k: string; v: React.ReactNode }) {
 }
 
 function HeaderBtn({
-  children, onClick, tone, primary,
+  children, onClick, tone, primary, disabled, title,
 }: {
   children: React.ReactNode;
-  onClick: () => void;
+  onClick?: () => void;
   tone?: "danger";
   primary?: boolean;
+  disabled?: boolean;
+  title?: string;
 }) {
   const cls = primary
     ? "bg-teal text-teal-foreground border-transparent hover:opacity-90"
@@ -234,7 +225,12 @@ function HeaderBtn({
       ? "border-danger/40 text-danger hover:bg-danger/10"
       : "border-border text-foreground hover:bg-panel-2";
   return (
-    <button onClick={onClick} className={`rounded border px-2 py-1 text-[11px] font-semibold transition-colors ${cls}`}>
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className={`rounded border px-2 py-1 text-[11px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:opacity-40 ${cls}`}
+    >
       {children}
     </button>
   );

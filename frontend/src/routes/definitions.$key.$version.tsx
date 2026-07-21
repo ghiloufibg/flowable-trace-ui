@@ -83,8 +83,8 @@ function DefinitionDetailPage() {
               </div>
               <div className="flex items-center gap-1.5">
                 <HeaderBtn onClick={() => navigator.clipboard?.writeText(def.key)}>Copy key</HeaderBtn>
-                <HeaderBtn onClick={() => alert("Download would export the BPMN resource")}>Download</HeaderBtn>
-                <HeaderBtn primary onClick={() => alert("Start instance dialog — coming next")}>Start instance</HeaderBtn>
+                <HeaderBtn disabled title="Not yet implemented">Download</HeaderBtn>
+                <HeaderBtn primary disabled title="Not yet implemented">Start instance</HeaderBtn>
               </div>
             </div>
           </header>
@@ -134,11 +134,13 @@ function DefinitionDetailPage() {
 }
 
 function HeaderBtn({
-  children, onClick, primary,
+  children, onClick, primary, disabled, title,
 }: {
   children: React.ReactNode;
-  onClick: () => void;
+  onClick?: () => void;
   primary?: boolean;
+  disabled?: boolean;
+  title?: string;
 }) {
   const cls = primary
     ? "bg-teal text-teal-foreground hover:opacity-90 border-transparent"
@@ -146,7 +148,9 @@ function HeaderBtn({
   return (
     <button
       onClick={onClick}
-      className={`rounded border px-2 py-1 text-[11px] font-semibold transition-colors ${cls}`}
+      disabled={disabled}
+      title={title}
+      className={`rounded border px-2 py-1 text-[11px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:opacity-40 ${cls}`}
     >
       {children}
     </button>

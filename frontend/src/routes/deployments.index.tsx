@@ -60,8 +60,9 @@ function DeploymentsListPage() {
             </div>
             <button
               type="button"
-              className="rounded-md bg-teal px-3 py-1.5 text-xs font-semibold text-teal-foreground hover:opacity-90"
-              onClick={() => alert("Upload flow — wire this to BpmnXmlLoader in the next pass.")}
+              disabled
+              title="Not yet implemented"
+              className="rounded-md bg-teal px-3 py-1.5 text-xs font-semibold text-teal-foreground hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:opacity-40"
             >
               + Upload deployment
             </button>
