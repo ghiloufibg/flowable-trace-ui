@@ -29,8 +29,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  * PostgreSQL instead of the default H2 fallback - H2 can mask SQL dialect issues, and nothing else
  * exercises the whole system (auto-configuration activation, {@code /process-api/**}, {@code
  * /custom/**} enrichment, {@code FlowTraceSchemaMigration}, the audit-trail listener) against a
- * real database; {@link io.github.ghiloufibg.flowable.audit.FlowTraceSchemaInitializerPostgresTest} only
- * covers the schema migration in isolation. See claudedocs/design-backend-postgres-smoke-test.md.
+ * real database; {@link io.github.ghiloufibg.flowable.audit.FlowTraceSchemaInitializerPostgresTest}
+ * only covers the schema migration in isolation. See
+ * claudedocs/design-backend-postgres-smoke-test.md.
  *
  * <p>Tagged {@code smoke} - excluded from the default {@code mvn verify} run (see backend/pom.xml)
  * and run instead by CI's dedicated {@code backend-smoke} job, which is guaranteed to have Docker
