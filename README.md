@@ -1,10 +1,13 @@
 # Flow Trace UI
 
 [![CI](https://github.com/ghiloufibg/flowable-trace-ui/actions/workflows/ci.yml/badge.svg)](https://github.com/ghiloufibg/flowable-trace-ui/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/tag/ghiloufibg/flowable-trace-ui?label=release)](https://github.com/ghiloufibg/flowable-trace-ui/tags)
 ![Java](https://img.shields.io/badge/Java-21-orange)
 ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.4-brightgreen)
 ![Flowable](https://img.shields.io/badge/Flowable-7.1-blue)
+![Code style](https://img.shields.io/badge/code%20style-google--java--format-blue)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Last commit](https://img.shields.io/github/last-commit/ghiloufibg/flowable-trace-ui)](https://github.com/ghiloufibg/flowable-trace-ui/commits/main)
 
 A Spring Boot auto-configuration library that adds a Flowable BPM trace/monitoring UI to an
 existing Spring Boot application, backed by that application's own `ProcessEngine`. Add the
@@ -111,6 +114,52 @@ One-time setup per clone, to enable this repo's commit-message hook (see `CLAUDE
 ```bash
 git config core.hooksPath .githooks
 ```
+
+### Dependency vulnerability (CVE) scanning
+
+[OWASP dependency-check](https://owasp.org/www-project-dependency-check/) scans every Java
+dependency across the reactor against the NVD; `npm audit` covers the frontend. Both run in CI
+(the `dependency-check` job) on every push/PR and weekly, failing on CVSS ≥ 7 (Java) or high/
+critical (npm). Not bound to `mvn verify` — a full scan is slow — run it explicitly:
+
+```bash
+mvn org.owasp:dependency-check-maven:aggregate
+```
+
+**One-time setup to enable this in CI**: register a free NVD API key at
+[nvd.nist.gov/developers/request-an-api-key](https://nvd.nist.gov/developers/request-an-api-key),
+then add it as a repository secret named `NVD_API_KEY` (Settings → Secrets and variables →
+Actions → New repository secret). Without it the scan still runs but is much slower and can hit
+NVD rate limits — the CI job prints a warning when the secret is missing.
+
+False positives go in `dependency-check-suppressions.xml` at the repo root, not silently ignored.
+
+### Publishing to Maven Central
+
+Pushing a tag matching `v*` triggers CI's `publish` job, which deploys the parent POM and
+`flow-trace-ui-backend` (only — `frontend`/`e2e-fixture` are marked `maven.deploy.skip`) via the
+`release` Maven profile (GPG-signs everything, attaches source/javadoc jars, uploads through the
+Central Portal). The profile is never active outside that job — it won't affect `mvn verify` or
+local builds.
+
+**This cannot work yet without manual setup, in this order:**
+
+1. **Verify the `io.ghiloufi.flowable` namespace** at [central.sonatype.com](https://central.sonatype.com).
+   This groupId does *not* match the auto-verified `io.github.<username>` convention, so it likely
+   needs proof of domain ownership — check this first, since it's the one prerequisite that could
+   block everything else regardless of how correct the pipeline is.
+2. Generate a **Central Portal user token** (account → Generate User Token) and add its two halves
+   as repo secrets `CENTRAL_TOKEN_USERNAME` / `CENTRAL_TOKEN_PASSWORD`.
+3. Generate a **GPG key pair**, publish the public key to a keyserver (e.g.
+   `gpg --keyserver keyserver.ubuntu.com --send-keys <key-id>` — Central checks it's retrievable),
+   and add the exported private key (`gpg --export-secret-keys --armor <key-id>`) as
+   `GPG_PRIVATE_KEY`, plus its passphrase as `GPG_PASSPHRASE`.
+4. Before tagging, bump the version in every `pom.xml` away from `-SNAPSHOT` — Central's release
+   repository rejects snapshot versions.
+
+`autoPublish` is deliberately `false` in the `release` profile: a tagged push uploads and validates
+but stops short of going live, so the first several releases can be reviewed in the Central Portal
+before finalizing. Flip it to `true` once the pipeline is trusted.
 
 ## Contributing
 

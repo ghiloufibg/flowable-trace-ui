@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OWASP dependency-check false-positive suppressions for this repo.
+
+  Add an entry here only for a finding confirmed not to apply (e.g. the vulnerable code path isn't
+  reachable, or the CVE is against a different artifact matched by name collision) - never to
+  silence a real, unaddressed vulnerability. See:
+  https://jeremylong.github.io/DependencyCheck/general/suppression.html
+-->
+<suppressions xmlns="https://jeremylong.github.io/DependencyCheck/dependency-suppression.1.3.xsd">
+</suppressions>

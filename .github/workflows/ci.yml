@@ -3,8 +3,12 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
     branches: [main]
+  schedule:
+    # Catch newly-disclosed CVEs against unchanged dependencies, not just on code pushes.
+    - cron: "0 6 * * 1"
 
 jobs:
   build:
@@ -81,3 +85,90 @@ jobs:
           name: playwright-report
           path: frontend/playwright-report/
           retention-days: 14
+
+  dependency-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Cache NVD vulnerability database
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/org/owasp/dependency-check-data
+          key: nvd-data-${{ github.run_id }}
+          restore-keys: nvd-data-
+
+      - name: Warn if NVD_API_KEY is not configured
+        if: ${{ secrets.NVD_API_KEY == '' }}
+        run: |
+          echo "::warning::NVD_API_KEY secret is not set - this scan will be slow and may hit NVD rate limits. See README's Development section for the one-time setup step."
+
+      - name: Run OWASP dependency-check (Java dependencies)
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        run: mvn -B org.owasp:dependency-check-maven:aggregate
+
+      - name: Upload dependency-check report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-check-report
+          path: target/dependency-check-report.html
+          retention-days: 30
+
+      - name: npm audit (frontend dependencies)
+        working-directory: frontend
+        run: npm audit --audit-level=high
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, backend-smoke, e2e]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # gpg-private-key/server-id/server-username/server-password wire up ~/.m2/settings.xml and
+      # import the signing key automatically - the officially recommended setup-java pattern for
+      # publishing to Maven Central, so no hand-rolled settings.xml or `gpg --import` step needed.
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+          server-id: central
+          server-username: CENTRAL_TOKEN_USERNAME
+          server-password: CENTRAL_TOKEN_PASSWORD
+          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
+          gpg-passphrase: GPG_PASSPHRASE
+
+      # Two explicit deploys, not one recursive `mvn deploy`: the parent POM (needed so consumers
+      # resolving flow-trace-ui-backend's <parent> reference can resolve it) and the backend jar
+      # itself. frontend/e2e-fixture set maven.deploy.skip=true and are never targeted directly.
+      - name: Publish parent POM
+        env:
+          CENTRAL_TOKEN_USERNAME: ${{ secrets.CENTRAL_TOKEN_USERNAME }}
+          CENTRAL_TOKEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN_PASSWORD }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: mvn -B -N deploy -Prelease
+
+      - name: Publish backend
+        env:
+          CENTRAL_TOKEN_USERNAME: ${{ secrets.CENTRAL_TOKEN_USERNAME }}
+          CENTRAL_TOKEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN_PASSWORD }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: mvn -B -pl backend -am deploy -Prelease -DskipTests

@@ -21,6 +21,21 @@
     </license>
   </licenses>
 
+  <developers>
+    <developer>
+      <name>ghiloufi</name>
+      <email>bg.ghiloufi@gmail.com</email>
+      <url>https://github.com/ghiloufibg</url>
+    </developer>
+  </developers>
+
+  <scm>
+    <connection>scm:git:https://github.com/ghiloufibg/flowable-trace-ui.git</connection>
+    <developerConnection>scm:git:https://github.com/ghiloufibg/flowable-trace-ui.git</developerConnection>
+    <url>https://github.com/ghiloufibg/flowable-trace-ui</url>
+    <tag>HEAD</tag>
+  </scm>
+
   <modules>
     <module>frontend</module>
     <module>backend</module>
@@ -32,5 +47,84 @@
     <maven.compiler.release>21</maven.compiler.release>
     <spring-boot.version>3.4.1</spring-boot.version>
     <flowable.version>7.1.0</flowable.version>
+    <dependency-check.version>12.2.2</dependency-check.version>
+    <central-publishing.version>0.11.0</central-publishing.version>
+    <maven-gpg-plugin.version>3.2.8</maven-gpg-plugin.version>
+    <maven-source-plugin.version>3.4.0</maven-source-plugin.version>
+    <maven-javadoc-plugin.version>3.12.0</maven-javadoc-plugin.version>
   </properties>
+
+  <build>
+    <plugins>
+      <!--
+        Not bound to any lifecycle phase - invoked explicitly (mvn org.owasp:dependency-check-maven:aggregate)
+        by CI's dependency-check job, not on every `mvn verify`, since a full scan is slow and rate-limited by
+        the NVD API. See README's Development section for the one-time NVD_API_KEY setup step.
+      -->
+      <plugin>
+        <groupId>org.owasp</groupId>
+        <artifactId>dependency-check-maven</artifactId>
+        <version>${dependency-check.version}</version>
+        <configuration>
+          <nvdApiKeyEnvironmentVariable>NVD_API_KEY</nvdApiKeyEnvironmentVariable>
+          <failBuildOnCVSS>7</failBuildOnCVSS>
+          <formats>
+            <format>HTML</format>
+            <format>JUNIT</format>
+          </formats>
+          <suppressionFiles>
+            <suppressionFile>${maven.multiModuleProjectDirectory}/dependency-check-suppressions.xml</suppressionFile>
+          </suppressionFiles>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+
+  <!--
+    Publishing to Maven Central - see README's "Publishing to Maven Central" section for the
+    manual prerequisites (namespace verification, GPG key, Central Portal token). Deliberately
+    a profile, not always-on plugins: activating it unconditionally would make every `mvn verify`
+    (including every contributor's local build) try to GPG-sign artifacts and fail without a key.
+    Only CI's `publish` job (tag pushes only) activates it, via `-Prelease`.
+  -->
+  <profiles>
+    <profile>
+      <id>release</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-gpg-plugin</artifactId>
+            <version>${maven-gpg-plugin.version}</version>
+            <executions>
+              <execution>
+                <id>sign-artifacts</id>
+                <phase>verify</phase>
+                <goals>
+                  <goal>sign</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.sonatype.central</groupId>
+            <artifactId>central-publishing-maven-plugin</artifactId>
+            <version>${central-publishing.version}</version>
+            <extensions>true</extensions>
+            <configuration>
+              <publishingServerId>central</publishingServerId>
+              <!--
+                Deliberately false: this groupId (io.ghiloufi.flowable) hasn't been through Central
+                namespace verification/a real publish yet. Leaving auto-publish off means a tagged
+                release uploads and validates but stops short of going live, so the first several
+                releases can be reviewed in the Central Portal before finalizing - flip to true only
+                once the pipeline is trusted.
+              -->
+              <autoPublish>false</autoPublish>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
 </project>

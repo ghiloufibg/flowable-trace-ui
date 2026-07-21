@@ -19,6 +19,8 @@
   <properties>
     <node.version>v22.19.0</node.version>
     <npm.version>11.18.0</npm.version>
+    <!-- Not a publishable artifact - its output is embedded into backend's jar, not shipped standalone. -->
+    <maven.deploy.skip>true</maven.deploy.skip>
   </properties>
 
   <build>

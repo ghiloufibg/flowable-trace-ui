@@ -16,6 +16,10 @@
   <name>Flow Trace UI - E2E Fixture</name>
   <description>Runnable Spring Boot app, seeded with deterministic Flowable data, that the Playwright E2E suite runs against in CI. Test infrastructure only - never published.</description>
 
+  <properties>
+    <maven.deploy.skip>true</maven.deploy.skip>
+  </properties>
+
   <dependencyManagement>
     <dependencies>
       <dependency>
