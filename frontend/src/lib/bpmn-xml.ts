@@ -530,7 +530,22 @@ export function computeEdgeRoute(
   for (let i = 0; i < baseWaypoints.length - 1; i++) {
     for (const o of obstacles) if (segHitsRect(baseWaypoints[i], baseWaypoints[i + 1], o)) obstaclesHit++;
   }
-  const routed = avoidObstacles(baseWaypoints, obstacles);
+  let routed = avoidObstacles(baseWaypoints, obstacles);
+  // Safety net: if simplification/detour collapsed the polyline to fewer
+  // than 2 distinct points, fall back to a straight orthogonal connection
+  // between shape centers so a visible line is always drawn (the diagram
+  // remains readable even when routing degenerates).
+  if (routed.length < 2) {
+    const sb = bounds(s), tb = bounds(t);
+    const srcSide = pickSide(s, { x: tb.cx, y: tb.cy });
+    const dstSide = pickSide(t, { x: sb.cx, y: sb.cy });
+    routed = orthogonalConnect(
+      anchorOnShape(s, srcSide, 0.5),
+      srcSide,
+      anchorOnShape(t, dstSide, 0.5),
+      dstSide,
+    );
+  }
   const detoured = obstaclesHit > 0 || routed.length !== baseWaypoints.length;
   return { waypoints: routed, baseWaypoints, detoured, obstaclesHit };
 }
@@ -706,11 +721,30 @@ function escapeXml(s: string): string {
 }
 
 export function processInstanceToBpmnXml(p: ProcessInstance): string {
+  // Guard: drop sequence flows whose source/target aren't in the node set.
+  // If we emit them anyway, bpmn-js raises an import warning ("missing
+  // sourceRef/targetRef") and silently drops the edge — which manifests as
+  // end events looking floating/unconnected because their incoming line
+  // never renders. Log a dev warning listing both dropped edges and any
+  // endEvent that has zero incoming edges at all (upstream data gap).
+  const nodeIds = new Set(p.nodes.map((n) => n.id));
+  const validEdges = p.edges.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target));
+  const droppedEdges = p.edges.filter((e) => !nodeIds.has(e.source) || !nodeIds.has(e.target));
+  const incoming = new Set(validEdges.map((e) => e.target));
+  const orphanEnds = p.nodes.filter((n) => n.type === "endEvent" && !incoming.has(n.id));
+  if (typeof console !== "undefined" && (droppedEdges.length || orphanEnds.length)) {
+    // eslint-disable-next-line no-console
+    console.warn("[bpmn-xml] diagram gaps for instance", p.id, {
+      droppedEdges: droppedEdges.map((e) => `${e.id}(${e.source}→${e.target})`),
+      orphanEndEvents: orphanEnds.map((n) => `${n.id}(${n.name})`),
+    });
+  }
+
   const elements = p.nodes.map((n) => `    ${elementXml(n)}`).join("\n");
-  const flows = p.edges.map((e) => `    ${edgeXml(e)}`).join("\n");
+  const flows = validEdges.map((e) => `    ${edgeXml(e)}`).join("\n");
   const shapes = p.nodes.map((n) => `    ${shapeDi(n)}`).join("\n");
-  const routes = computeAllEdgeRoutes(p.edges, p.nodes);
-  const edges = p.edges
+  const routes = computeAllEdgeRoutes(validEdges, p.nodes);
+  const edges = validEdges
     .map((e) => {
       const r = routes.get(e.id);
       return r ? `    ${edgeDi(e, r)}` : "";
