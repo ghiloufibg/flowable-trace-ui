@@ -232,6 +232,27 @@ export function BpmnXmlDiagram({
     // Clear our previous overlays
     overlays.remove({ type: "state-badge" });
 
+    // Tag embedded sub-process containers so CSS can render them as a
+    // visible enclosing region (rounded dashed border, transparent fill)
+    // rather than an opaque rectangle that hides child activities.
+    const reg2 = v.get<{
+      getAll: () => Array<{
+        id: string;
+        businessObject?: { $type?: string; isExpanded?: boolean };
+      }>;
+    }>("elementRegistry");
+    for (const el of reg2.getAll()) {
+      const t = el.businessObject?.$type;
+      if (t === "bpmn:SubProcess" || t === "bpmn:Transaction" || t === "bpmn:AdHocSubProcess") {
+        canvas.addMarker(el.id, "bpmn-subprocess");
+        if (el.businessObject?.isExpanded === false) {
+          canvas.addMarker(el.id, "bpmn-subprocess-collapsed");
+        } else {
+          canvas.addMarker(el.id, "bpmn-subprocess-expanded");
+        }
+      }
+    }
+
     const MARKERS = ["state-active", "state-completed", "state-failed", "state-waiting", "state-pending"];
 
     for (const n of instance.nodes) {

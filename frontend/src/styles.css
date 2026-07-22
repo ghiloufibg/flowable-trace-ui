@@ -275,6 +275,47 @@
   fill: color-mix(in oklch, var(--warning) 15%, var(--panel)) !important;
 }
 
+/* Embedded sub-process container — draw a visible enclosing region so
+   the subprocess boundary reads as a distinct group rather than blending
+   into a solid rectangle. Only applies to the container's own visual
+   (immediate child), never to nested child shapes. */
+.fc-djs .bpmn-subprocess-expanded > .djs-visual > :nth-child(1) {
+  fill: color-mix(in oklch, var(--teal) 5%, transparent) !important;
+  stroke: color-mix(in oklch, var(--teal) 55%, var(--border)) !important;
+  stroke-width: 1.5px !important;
+  stroke-dasharray: 6 4 !important;
+  rx: 10;
+  ry: 10;
+}
+/* Preserve the transparent enclosing look under state markers so child
+   activities stay visible; only tint the border. */
+.fc-djs .bpmn-subprocess-expanded.state-active > .djs-visual > :nth-child(1) {
+  stroke: var(--teal) !important;
+  fill: color-mix(in oklch, var(--teal) 7%, transparent) !important;
+  stroke-dasharray: 6 4 !important;
+}
+.fc-djs .bpmn-subprocess-expanded.state-completed > .djs-visual > :nth-child(1) {
+  stroke: var(--success) !important;
+  fill: color-mix(in oklch, var(--success) 5%, transparent) !important;
+  stroke-dasharray: 6 4 !important;
+}
+.fc-djs .bpmn-subprocess-expanded.state-failed > .djs-visual > :nth-child(1) {
+  stroke: var(--danger) !important;
+  fill: color-mix(in oklch, var(--danger) 7%, transparent) !important;
+  stroke-dasharray: 6 4 !important;
+}
+.fc-djs .bpmn-subprocess-expanded.state-waiting > .djs-visual > :nth-child(1) {
+  stroke: var(--warning) !important;
+  fill: color-mix(in oklch, var(--warning) 7%, transparent) !important;
+  stroke-dasharray: 6 4 !important;
+}
+/* Collapsed sub-process behaves like a task shape — keep solid panel fill
+   (children aren't rendered) so it reads as a compact activity. */
+.fc-djs .bpmn-subprocess-collapsed > .djs-visual > :nth-child(1) {
+  fill: var(--panel-2) !important;
+  stroke-dasharray: none !important;
+}
+
 /* Selection ring */
 .fc-djs .is-selected .djs-outline {
   stroke: var(--teal) !important;
