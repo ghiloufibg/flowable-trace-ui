@@ -25,6 +25,11 @@ export function AppShell({ children, headerRight }: Props) {
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "failed" | "ended">("all");
   const [visibleGroups, setVisibleGroups] = useState(GROUPS_PAGE);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [engineHost, setEngineHost] = useState("");
+
+  useEffect(() => {
+    setEngineHost(window.location.host);
+  }, []);
 
   // ⌘K / Ctrl-K to focus search
   useEffect(() => {
@@ -250,7 +255,7 @@ export function AppShell({ children, headerRight }: Props) {
 
               <div className="border-t border-border px-3 py-2 mono text-[10px] text-muted-foreground">
                 <span className="inline-block h-1.5 w-1.5 rounded-full bg-teal mr-1.5 align-middle" />
-                engine · localhost:8080
+                engine · {engineHost || "…"}
               </div>
             </>
           )}
