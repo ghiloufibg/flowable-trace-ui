@@ -24,7 +24,7 @@ class AuditRepositoryTest {
   void setUp() {
     JdbcDataSource dataSource = new JdbcDataSource();
     dataSource.setURL("jdbc:h2:mem:audit-repository-" + UUID.randomUUID() + ";DB_CLOSE_DELAY=-1");
-    FlowTraceSchemaInitializer.migrate(dataSource);
+    FlowTraceSchemaInitializer.resetSchema(dataSource);
     jdbcTemplate = new JdbcTemplate(dataSource);
     auditRepository = new AuditRepository(dataSource);
   }

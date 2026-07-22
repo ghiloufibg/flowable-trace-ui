@@ -58,7 +58,7 @@ class FlowTraceSchemaInitializerPostgresTest {
 
   @Test
   void migratesTheAuditTablesIntoRealPostgres() throws Exception {
-    FlowTraceSchemaInitializer.migrate(dataSource);
+    FlowTraceSchemaInitializer.resetSchema(dataSource);
 
     try (Connection connection = dataSource.getConnection()) {
       DatabaseMetaData metaData = connection.getMetaData();

@@ -54,7 +54,7 @@ class FlowTraceAuditEventListenerTest {
             .buildProcessEngine();
 
     DataSource dataSource = processEngine.getProcessEngineConfiguration().getDataSource();
-    FlowTraceSchemaInitializer.migrate(dataSource);
+    FlowTraceSchemaInitializer.resetSchema(dataSource);
 
     AuditRepository auditRepository = new AuditRepository(dataSource);
     FlowTraceAuditEventListener listener =

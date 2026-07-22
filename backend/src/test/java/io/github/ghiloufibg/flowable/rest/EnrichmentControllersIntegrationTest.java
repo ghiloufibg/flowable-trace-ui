@@ -376,7 +376,7 @@ class EnrichmentControllersIntegrationTest {
             .buildProcessEngine();
 
     DataSource dataSource = processEngine.getProcessEngineConfiguration().getDataSource();
-    FlowTraceSchemaInitializer.migrate(dataSource);
+    FlowTraceSchemaInitializer.resetSchema(dataSource);
     AuditRepository auditRepository = new AuditRepository(dataSource);
     processEngine
         .getProcessEngineConfiguration()
@@ -915,7 +915,7 @@ class EnrichmentControllersIntegrationTest {
             .setAsyncExecutorActivate(false)
             .setHistory("full")
             .buildProcessEngine();
-    FlowTraceSchemaInitializer.migrate(
+    FlowTraceSchemaInitializer.resetSchema(
         fullHistoryEngine.getProcessEngineConfiguration().getDataSource());
     InstanceEnrichmentController fullHistoryInstanceController =
         new InstanceEnrichmentController(

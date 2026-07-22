@@ -1,44 +1,102 @@
 package io.github.ghiloufibg.flowable.audit;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 import javax.sql.DataSource;
-import org.flywaydb.core.Flyway;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
- * Migrates the FLOWTRACE_* audit tables into whatever {@link DataSource} the consumer's existing
+ * Resets the FLOWTRACE_* audit tables into whatever {@link DataSource} the consumer's existing
  * Flowable engine already uses, rather than adding new flowtrace.datasource.* properties -
  * guarantees the audit tables always land in the same physical database Flowable itself uses. See
  * claudedocs/backend-library-design.md §5.
  *
- * <p>Uses a dedicated Flyway instance, not Spring Boot's own auto-configured {@code Flyway} bean: a
- * separate {@code dataSource}/{@code locations}/{@code table} keeps this migration history
- * completely independent of whatever the consumer's own app does with Flyway (if anything). The
- * migration file lives at {@code classpath:flowtrace/db/migration}, deliberately *not* nested under
- * Spring Boot's default scan path {@code classpath:db/migration} - Flyway's location scanning is
- * recursive, so nesting it there would let Boot's own default-configured {@code Flyway} bean (see
- * {@link
- * io.github.ghiloufibg.flowable.FlowTraceAutoConfiguration#flowTraceFlywayConfigurationCustomizer})
- * discover and re-apply the same file under its own history table, failing with "relation already
- * exists" the second time either one runs. See claudedocs/design-flyway-schema-migration.md.
+ * <p>Plain DROP+CREATE DDL, not Flyway - see claudedocs/design-schema-init-ddl-reset.md for the
+ * full rationale. This data (variable-change history, job-retry history, sequence-flow-taken
+ * history, deployment activity log) is debug/trace-only and reconstructable, unlike Flowable's own
+ * engine tables, so it's safe - and simpler - to wipe and recreate on every attachment rather than
+ * carry migration/version-history machinery for it.
  *
- * <p>{@code baselineOnMigrate(true)} is required, not optional: without it, Flyway refuses to touch
- * a schema that already has tables it doesn't recognize (Flowable's own ACT_ and FLW_ tables) and
- * has no schema history table yet - {@code Found non-empty schema "PUBLIC" but no schema history
- * table} - exactly the failure that originally ruled out Flyway entirely (see the design doc).
- * {@code baselineVersion("0")} keeps the baseline below this module's {@code V1} migration, so
- * baselining doesn't also mark {@code V1} itself as already applied.
+ * <p><b>Concurrency note</b>: a {@code DataSource} attached more than once *within the same JVM*
+ * (e.g. two engines in one test run sharing one database) only gets its destructive DROP applied on
+ * the first attachment - later attachments in the same JVM just ensure the tables exist, protecting
+ * whatever the first attachment already wrote. This does <b>not</b> protect two *separate JVM
+ * processes* attached to the same physical schema at the same moment - the same documented boundary
+ * Spring Boot's own {@code schema.sql}/{@code spring.sql.init.mode=always} carries, not a new gap
+ * introduced here.
  */
 public final class FlowTraceSchemaInitializer {
 
+  private static final Logger log = LoggerFactory.getLogger(FlowTraceSchemaInitializer.class);
+
+  private static final String SCHEMA_RESOURCE = "flowtrace/schema.sql";
+
+  private static final List<String> DROP_STATEMENTS =
+      List.of(
+          "DROP TABLE IF EXISTS FLOWTRACE_VARIABLE_HISTORY",
+          "DROP TABLE IF EXISTS FLOWTRACE_JOB_ATTEMPT",
+          "DROP TABLE IF EXISTS FLOWTRACE_SEQUENCE_FLOW_TAKEN",
+          "DROP TABLE IF EXISTS FLOWTRACE_DEPLOYMENT_ACTIVITY");
+
+  /** JDBC URLs already reset once in this JVM - guards against wiping a still-live sibling. */
+  private static final Set<String> RESET_JDBC_URLS = ConcurrentHashMap.newKeySet();
+
   private FlowTraceSchemaInitializer() {}
 
-  public static void migrate(DataSource dataSource) {
-    Flyway.configure()
-        .dataSource(dataSource)
-        .locations("classpath:flowtrace/db/migration")
-        .table("flowtrace_schema_history")
-        .baselineOnMigrate(true)
-        .baselineVersion("0")
-        .load()
-        .migrate();
+  public static void resetSchema(DataSource dataSource) {
+    try (Connection connection = dataSource.getConnection()) {
+      String jdbcUrl = connection.getMetaData().getURL();
+      boolean firstAttachmentInThisJvm = RESET_JDBC_URLS.add(jdbcUrl);
+
+      try (Statement statement = connection.createStatement()) {
+        if (firstAttachmentInThisJvm) {
+          for (String drop : DROP_STATEMENTS) {
+            statement.execute(drop);
+          }
+        } else {
+          log.warn(
+              "FLOWTRACE_* schema already reset once for {} in this JVM; skipping a second "
+                  + "destructive reset and ensuring tables exist instead. If two engines are "
+                  + "meant to be fully independent, give them separate databases.",
+              jdbcUrl);
+        }
+        for (String create : loadCreateStatements()) {
+          statement.execute(create);
+        }
+      }
+    } catch (SQLException e) {
+      throw new IllegalStateException("Failed to reset FLOWTRACE_* audit schema", e);
+    }
+  }
+
+  private static List<String> loadCreateStatements() {
+    try (InputStream in =
+        FlowTraceSchemaInitializer.class.getClassLoader().getResourceAsStream(SCHEMA_RESOURCE)) {
+      if (in == null) {
+        throw new IllegalStateException(SCHEMA_RESOURCE + " not found on classpath");
+      }
+      String sql = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+      String withoutComments =
+          sql.lines()
+              .filter(line -> !line.strip().startsWith("--"))
+              .collect(Collectors.joining("\n"));
+      return Arrays.stream(withoutComments.split(";"))
+          .map(String::strip)
+          .filter(statement -> !statement.isEmpty())
+          .toList();
+    } catch (IOException e) {
+      throw new UncheckedIOException("Failed to load " + SCHEMA_RESOURCE, e);
+    }
   }
 }

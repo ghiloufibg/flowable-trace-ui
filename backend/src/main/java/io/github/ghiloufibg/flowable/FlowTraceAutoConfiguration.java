@@ -84,15 +84,17 @@ public class FlowTraceAutoConfiguration {
   }
 
   /**
-   * Migrates the FLOWTRACE_* audit tables into whatever DataSource the existing ProcessEngine
-   * already uses - reusing it directly (rather than adding new flowtrace.datasource.* properties)
+   * Resets the FLOWTRACE_* audit tables into whatever DataSource the existing ProcessEngine already
+   * uses - reusing it directly (rather than adding new flowtrace.datasource.* properties)
    * guarantees the audit tables always land in the same physical database Flowable itself uses. See
-   * decision in claudedocs/backend-library-design.md §5.
+   * decision in claudedocs/backend-library-design.md §5 and
+   * claudedocs/design-schema-init-ddl-reset.md for why this is a plain DROP+CREATE reset rather
+   * than a Flyway migration.
    */
   @Bean
   public FlowTraceSchemaMigration flowTraceSchemaMigration() {
     DataSource dataSource = processEngine.getProcessEngineConfiguration().getDataSource();
-    FlowTraceSchemaInitializer.migrate(dataSource);
+    FlowTraceSchemaInitializer.resetSchema(dataSource);
     return new FlowTraceSchemaMigration(dataSource);
   }
 
