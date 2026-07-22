@@ -1,2 +1,3 @@
 io.github.ghiloufibg.flowable.FlowTraceAutoConfiguration
+io.github.ghiloufibg.flowable.FlowTraceFlywayAutoConfiguration
 io.github.ghiloufibg.flowable.web.FlowTraceWebAutoConfiguration

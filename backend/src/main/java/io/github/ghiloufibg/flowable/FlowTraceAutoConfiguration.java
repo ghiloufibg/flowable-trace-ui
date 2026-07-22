@@ -23,7 +23,6 @@ import org.springframework.boot.autoconfigure.AutoConfigureOrder;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.boot.autoconfigure.flyway.FlywayConfigurationCustomizer;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
@@ -95,23 +94,6 @@ public class FlowTraceAutoConfiguration {
     DataSource dataSource = processEngine.getProcessEngineConfiguration().getDataSource();
     FlowTraceSchemaInitializer.migrate(dataSource);
     return new FlowTraceSchemaMigration(dataSource);
-  }
-
-  /**
-   * Adding flyway-core as a real dependency (see claudedocs/design-flyway-schema-migration.md)
-   * means Spring Boot's own {@code FlywayAutoConfiguration} now also auto-activates in every
-   * consumer app that has a DataSource bean - completely independent of {@link
-   * FlowTraceSchemaInitializer}'s own dedicated Flyway instance. Left at its defaults, that
-   * separate bean fails startup outright the moment Flowable's pre-existing ACT_ and FLW_ tables
-   * are in the same schema with no schema history table yet - the exact failure that originally
-   * ruled Flyway out entirely. This customizer (Spring Boot's own supported extension point for the
-   * bean it auto-configures) only sets {@code baselineOnMigrate}, never touching {@code
-   * locations}/{@code table}, so a consumer's own Flyway migrations (if any) still run through
-   * Boot's bean exactly as they would without this library on the classpath.
-   */
-  @Bean
-  public FlywayConfigurationCustomizer flowTraceFlywayConfigurationCustomizer() {
-    return configuration -> configuration.baselineOnMigrate(true).baselineVersion("0");
   }
 
   /**
