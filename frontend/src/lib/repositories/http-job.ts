@@ -14,7 +14,7 @@
 
 import type { JobRepository } from "@/lib/store";
 import { notifyStoreChanged } from "@/lib/store";
-import type { EngineJob } from "@/lib/types";
+import type { EngineJob, JobKind } from "@/lib/types";
 import { customClient, flowableClient } from "@/lib/api/client";
 import {
   mapJob,
@@ -30,6 +30,14 @@ const EMPTY_HEALTH: JobHealth = {
   dead: 0,
   locked: 0,
 };
+
+export interface JobPageQuery {
+  start: number;
+  size: number;
+  jobType?: JobKind;
+  sort?: string;
+  order?: "asc" | "desc";
+}
 
 export class HttpJobRepository implements JobRepository {
   private summaries = new Map<string, EngineJob>();
@@ -113,6 +121,56 @@ export class HttpJobRepository implements JobRepository {
 
   jobHealth(): JobHealth {
     return this.health;
+  }
+
+  /**
+   * Lazy per-page fetch. Routes to the type-specific Flowable endpoint when
+   * a `jobType` filter is set (`management/timer-jobs`,
+   * `management/deadletter-jobs`) - matches how Flowable REST partitions job
+   * kinds - otherwise hits the shared `management/jobs` endpoint. Only
+   * covers one job kind per call, unlike hydrate() (which merges all three
+   * for the aggregate KPIs); that's fine since the jobs list view always
+   * filters to a single type or the unfiltered async queue.
+   */
+  async fetchPage(q: JobPageQuery): Promise<{ items: EngineJob[]; total: number }> {
+    const qs = new URLSearchParams();
+    qs.set("start", String(q.start));
+    qs.set("size", String(q.size));
+    if (q.sort) qs.set("sort", q.sort);
+    if (q.order) qs.set("order", q.order);
+
+    const endpoint =
+      q.jobType === "timer"
+        ? "management/timer-jobs"
+        : q.jobType === "deadletter"
+          ? "management/deadletter-jobs"
+          : "management/jobs";
+
+    const list = await flowableClient.get<FlowableList<FlowableJobDTO>>(`${endpoint}?${qs.toString()}`);
+    const items: EngineJob[] = [];
+    const needFallback: string[] = [];
+    for (const dto of list.data) {
+      const j = mapJob(dto);
+      if (j) items.push(j);
+      else needFallback.push(dto.id);
+    }
+    if (needFallback.length > 0) {
+      const results = await Promise.all(
+        needFallback.map((id) => customClient.get<EngineJob>(`jobs/${id}`).catch(() => undefined)),
+      );
+      for (const j of results) if (j) items.push(j);
+    }
+
+    const windowed = items.length > q.size ? items.slice(q.start, q.start + q.size) : items;
+
+    // Populate caches so a subsequent detail navigation is warm.
+    for (const j of windowed) {
+      this.details.set(j.id, j);
+      if (!this.order.includes(j.id)) this.order.push(j.id);
+    }
+    notifyStoreChanged();
+
+    return { items: windowed, total: list.total };
   }
 
   async hydrate(): Promise<void> {

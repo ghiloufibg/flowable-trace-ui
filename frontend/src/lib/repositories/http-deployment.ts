@@ -20,6 +20,15 @@ import {
 } from "@/lib/api/flowable-mappers";
 import type { HttpInstanceRepository } from "@/lib/repositories/http-instance";
 
+export interface DeploymentPageQuery {
+  start: number;
+  size: number;
+  nameLike?: string;
+  tenantId?: string;
+  sort?: string;
+  order?: "asc" | "desc";
+}
+
 export class HttpDeploymentRepository implements DeploymentRepository {
   private summaries = new Map<string, Deployment>();
   private details = new Map<string, Deployment>();
@@ -81,6 +90,53 @@ export class HttpDeploymentRepository implements DeploymentRepository {
         (p: ProcessInstance) =>
           defKeys.has(`${p.definitionKey}::${p.version}`) && p.status === "active",
       ).length;
+  }
+
+  /**
+   * Lazy per-page fetch - sends start/size/filter to Flowable REST and
+   * returns the response's `total` so the UI can drive the pagination
+   * chrome. Same fallback path as hydrate(): every dto currently takes the
+   * per-id enrichment call since Flowable's native list endpoint has no
+   * `_domain` field to short-circuit it.
+   */
+  async fetchPage(q: DeploymentPageQuery): Promise<{ items: Deployment[]; total: number }> {
+    const qs = new URLSearchParams();
+    qs.set("start", String(q.start));
+    qs.set("size", String(q.size));
+    if (q.nameLike && q.nameLike.length > 0) qs.set("nameLike", `%${q.nameLike}%`);
+    if (q.tenantId) qs.set("tenantId", q.tenantId);
+    if (q.sort) qs.set("sort", q.sort);
+    if (q.order) qs.set("order", q.order);
+
+    const list = await flowableClient.get<FlowableList<FlowableDeploymentDTO>>(
+      `repository/deployments?${qs.toString()}`,
+    );
+    const items: Deployment[] = [];
+    const needFallback: string[] = [];
+    for (const dto of list.data) {
+      const d = mapDeployment(dto);
+      if (d) items.push(d);
+      else needFallback.push(dto.id);
+    }
+    if (needFallback.length > 0) {
+      const results = await Promise.all(
+        needFallback.map((id) =>
+          customClient.get<Deployment>(`deployments/${id}`).catch(() => undefined),
+        ),
+      );
+      for (const d of results) if (d) items.push(d);
+    }
+
+    const windowed = items.length > q.size ? items.slice(q.start, q.start + q.size) : items;
+
+    // Populate caches so clicking a row into detail has data already.
+    for (const d of windowed) {
+      this.details.set(d.id, d);
+      if (!this.order.includes(d.id)) this.order.push(d.id);
+    }
+    notifyStoreChanged();
+
+    return { items: windowed, total: list.total };
   }
 
   async hydrate(): Promise<void> {

@@ -24,6 +24,17 @@ import {
 } from "@/lib/api/flowable-mappers";
 import type { HttpInstanceRepository } from "@/lib/repositories/http-instance";
 
+export interface DefinitionPageQuery {
+  start: number;
+  size: number;
+  nameLike?: string;
+  tenantId?: string;
+  suspended?: boolean;
+  latest?: boolean;
+  sort?: string;
+  order?: "asc" | "desc";
+}
+
 export class HttpDefinitionRepository implements DefinitionRepository {
   private all: ProcessDefinition[] = [];
   private detailInFlight = new Map<string, Promise<ProcessDefinition>>();
@@ -120,6 +131,55 @@ export class HttpDefinitionRepository implements DefinitionRepository {
       });
     this.templateInFlight.set(cacheKey, p);
     return p;
+  }
+
+  /**
+   * Lazy per-page fetch. Returns `{items, total}` where `total` is the
+   * server-reported count for the whole (filtered) result set - used to
+   * drive the pagination UI.
+   */
+  async fetchPage(q: DefinitionPageQuery): Promise<{ items: ProcessDefinition[]; total: number }> {
+    const qs = new URLSearchParams();
+    qs.set("start", String(q.start));
+    qs.set("size", String(q.size));
+    if (q.nameLike && q.nameLike.length > 0) qs.set("nameLike", `%${q.nameLike}%`);
+    if (q.tenantId) qs.set("tenantId", q.tenantId);
+    if (typeof q.suspended === "boolean") qs.set("suspended", String(q.suspended));
+    if (q.latest) qs.set("latest", "true");
+    if (q.sort) qs.set("sort", q.sort);
+    if (q.order) qs.set("order", q.order);
+
+    const list = await flowableClient.get<FlowableList<FlowableProcessDefinitionDTO>>(
+      `repository/process-definitions?${qs.toString()}`,
+    );
+    const items: ProcessDefinition[] = [];
+    const needFallback: FlowableProcessDefinitionDTO[] = [];
+    for (const dto of list.data) {
+      const d = mapProcessDefinition(dto);
+      if (d) items.push(d);
+      else needFallback.push(dto);
+    }
+    if (needFallback.length > 0) {
+      const results = await Promise.all(
+        needFallback.map((dto) =>
+          customClient
+            .get<ProcessDefinition>(`definitions/${dto.key}/${dto.version}`)
+            .catch(() => undefined),
+        ),
+      );
+      for (const d of results) if (d) items.push(d);
+    }
+
+    const windowed = items.length > q.size ? items.slice(q.start, q.start + q.size) : items;
+
+    // Merge into the shared `all` cache so getDefinition()/versionCount()
+    // start seeing rows the user has actually paged through.
+    for (const d of windowed) {
+      if (!this.getDefinition(d.key, d.version)) this.all.push(d);
+    }
+    notifyStoreChanged();
+
+    return { items: windowed, total: list.total };
   }
 
   async hydrate(): Promise<void> {

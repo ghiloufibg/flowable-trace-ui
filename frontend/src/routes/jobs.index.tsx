@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Pagination } from "@/components/pagination";
 import { AppShell } from "@/components/app-shell";
 import { RelTime } from "@/components/rel-time";
-import { jobHealth, useJobs, type EngineJob, type JobKind } from "@/lib/store";
+import { jobHealth, usePagedJobs, type EngineJob, type JobKind } from "@/lib/store";
 
 export const Route = createFileRoute("/jobs/")({
   head: () => ({
@@ -19,42 +19,52 @@ export const Route = createFileRoute("/jobs/")({
 
 type SortKey = "due" | "age" | "retries";
 
+// Flowable REST job sort field mapping. `retries` doesn't map to a native
+// server field on every Flowable version, so we fall back to client-side
+// sort over the fetched page for that case (see below).
+const SORT_TO_FLOWABLE: Record<SortKey, string | undefined> = {
+  due: "dueDate",
+  age: "createTime",
+  retries: undefined,
+};
+
 function JobsListPage() {
-  const all = useJobs();
   const health = jobHealth();
   const [q, setQ] = useState("");
   const [type, setType] = useState<"all" | JobKind>("all");
   const [sort, setSort] = useState<SortKey>("due");
 
-  const rows = useMemo(() => {
-    const needle = q.trim().toLowerCase();
-    const filtered = all.filter((j) => {
-      if (type !== "all" && j.type !== type) return false;
-      if (!needle) return true;
-      return (
-        j.activityName.toLowerCase().includes(needle) ||
-        j.businessKey.toLowerCase().includes(needle) ||
-        j.id.toLowerCase().includes(needle) ||
-        (j.exceptionMessage ?? "").toLowerCase().includes(needle)
-      );
-    });
-    filtered.sort((a, b) => {
-      if (sort === "retries") return a.retries - b.retries;
-      if (sort === "age") return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
-      // due
-      const ad = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
-      const bd = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
-      return ad - bd;
-    });
-    return filtered;
-  }, [all, q, type, sort]);
-
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
-  useEffect(() => { setPage(1); }, [q, type, sort, rows.length]);
-  const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
-  const safePage = Math.min(page, pageCount);
-  const pageRows = rows.slice((safePage - 1) * pageSize, safePage * pageSize);
+  useEffect(() => { setPage(1); }, [q, type, sort, pageSize]);
+
+  const paged = usePagedJobs({
+    page,
+    pageSize,
+    jobType: type === "all" ? undefined : type,
+    sort: SORT_TO_FLOWABLE[sort],
+    order: "asc",
+  });
+
+  // Text search and `retries` sort don't map to Flowable REST params -
+  // apply them over the currently-fetched page. The "N shown" label
+  // reflects that post-filter count; server-authoritative `total` still
+  // drives Pagination's page count and Next/Prev buttons.
+  const rows = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    const filtered = !needle
+      ? paged.items
+      : paged.items.filter((j) =>
+          j.activityName.toLowerCase().includes(needle) ||
+          j.businessKey.toLowerCase().includes(needle) ||
+          j.id.toLowerCase().includes(needle) ||
+          (j.exceptionMessage ?? "").toLowerCase().includes(needle),
+        );
+    if (sort === "retries") {
+      return filtered.slice().sort((a, b) => a.retries - b.retries);
+    }
+    return filtered;
+  }, [paged.items, q, sort]);
 
   return (
     <AppShell>
@@ -63,7 +73,7 @@ function JobsListPage() {
           <div>
             <h1 className="text-lg font-semibold tracking-tight">Job executor</h1>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              What the async executor is doing right now. {all.length} jobs total.
+              What the async executor is doing right now. {paged.total} jobs total.
             </p>
           </div>
 
@@ -96,7 +106,9 @@ function JobsListPage() {
             <Select label="Sort" value={sort} onChange={(v) => setSort(v as SortKey)} options={[
               ["due", "Due date"], ["age", "Age"], ["retries", "Retries"],
             ]} />
-            <span className="ml-auto mono text-[10px] text-muted-foreground">{rows.length} shown</span>
+            <span className="ml-auto mono text-[10px] text-muted-foreground">
+              {paged.loading ? "Loading…" : `${rows.length} shown`}
+            </span>
           </div>
 
           <div className="mt-3 overflow-hidden rounded-md border border-border bg-panel">
@@ -108,15 +120,19 @@ function JobsListPage() {
               <div className="text-right">Retries</div>
               <div>Exception</div>
             </div>
-            {rows.length === 0 ? (
-              <div className="p-8 text-center text-xs text-muted-foreground">No jobs match those filters.</div>
+            {paged.error ? (
+              <div className="p-8 text-center text-xs text-danger">Failed to load jobs: {paged.error.message}</div>
+            ) : rows.length === 0 ? (
+              <div className="p-8 text-center text-xs text-muted-foreground">
+                {paged.loading ? "Loading jobs…" : "No jobs match those filters."}
+              </div>
             ) : (
-              pageRows.map((j, i) => <Row key={j.id} j={j} last={i === pageRows.length - 1} />)
+              rows.map((j, i) => <Row key={j.id} j={j} last={i === rows.length - 1} />)
             )}
           </div>
           <Pagination
-            total={rows.length}
-            page={safePage}
+            total={paged.total}
+            page={page}
             pageSize={pageSize}
             onPageChange={setPage}
             onPageSizeChange={(n) => { setPageSize(n); setPage(1); }}

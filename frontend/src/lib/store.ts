@@ -13,7 +13,10 @@
  * "@/lib/store"`.
  */
 
-import { useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
+import type { DeploymentPageQuery } from "@/lib/repositories/http-deployment";
+import type { DefinitionPageQuery } from "@/lib/repositories/http-definition";
+import type { JobPageQuery } from "@/lib/repositories/http-job";
 import {
   INSTANCES as MOCK_INSTANCES,
   getInstance as mockGetInstance,
@@ -62,6 +65,7 @@ export interface DeploymentRepository {
   getDeployment(id: string): Deployment | undefined;
   activeInstanceCount(d: Deployment): number;
   ensureDeployment?(id: string): Promise<Deployment>;
+  fetchPage?(q: DeploymentPageQuery): Promise<PagedResult<Deployment>>;
 }
 
 export interface DefinitionRepository {
@@ -74,6 +78,7 @@ export interface DefinitionRepository {
   templateInstanceFor(key: string, version: number): ProcessInstance | undefined;
   ensureDefinition?(key: string, version: number): Promise<ProcessDefinition>;
   ensureTemplateInstance?(key: string, version: number): Promise<ProcessInstance | undefined>;
+  fetchPage?(q: DefinitionPageQuery): Promise<PagedResult<ProcessDefinition>>;
 }
 
 export interface JobRepository {
@@ -90,6 +95,14 @@ export interface JobRepository {
     oldestAsyncCreated?: string;
   };
   ensureJob?(id: string): Promise<EngineJob>;
+  fetchPage?(q: JobPageQuery): Promise<PagedResult<EngineJob>>;
+}
+
+/** Result of a paged fetch - `total` is the server-reported count for the
+ *  full (filtered) result set, used to drive the pagination UI. */
+export interface PagedResult<T> {
+  items: T[];
+  total: number;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -323,6 +336,137 @@ export const useJobs = (): EngineJob[] =>
   useSyncExternalStore(subscribeToStore, getJobsSnapshot);
 export const useJob = (id: string | undefined): EngineJob | undefined =>
   useSyncExternalStore(subscribeToStore, () => (id ? getJobByIdSnapshot(id) : undefined));
+
+/* -------------------------------------------------------------------------- */
+/* Paged fetchers - one network call per (page, pageSize, filters) tuple      */
+/* -------------------------------------------------------------------------- */
+
+/** Fallback for repositories that don't implement `fetchPage()` (e.g. the
+ *  mock repositories) - slices the already-cached list so paged routes keep
+ *  working without every repository needing the real implementation. */
+function fallbackPage<T>(all: T[], start: number, size: number): PagedResult<T> {
+  return { items: all.slice(start, start + size), total: all.length };
+}
+
+export function fetchDeploymentsPage(q: DeploymentPageQuery): Promise<PagedResult<Deployment>> {
+  return deploymentRepo.fetchPage
+    ? deploymentRepo.fetchPage(q)
+    : Promise.resolve(fallbackPage(deploymentRepo.listDeployments(), q.start, q.size));
+}
+
+export function fetchDefinitionsPage(q: DefinitionPageQuery): Promise<PagedResult<ProcessDefinition>> {
+  return definitionRepo.fetchPage
+    ? definitionRepo.fetchPage(q)
+    : Promise.resolve(fallbackPage(definitionRepo.listDefinitions(), q.start, q.size));
+}
+
+export function fetchJobsPage(q: JobPageQuery): Promise<PagedResult<EngineJob>> {
+  return jobRepo.fetchPage
+    ? jobRepo.fetchPage(q)
+    : Promise.resolve(fallbackPage(jobRepo.listJobs(), q.start, q.size));
+}
+
+export type { DeploymentPageQuery, DefinitionPageQuery, JobPageQuery };
+
+/* -------------------------------------------------------------------------- */
+/* Paged React hooks - components pass page/pageSize/filters and get back     */
+/* { items, total, loading, error }. Every param change fires one fetch;      */
+/* stale responses are dropped.                                               */
+/* -------------------------------------------------------------------------- */
+
+export interface UsePagedState<T> {
+  items: T[];
+  total: number;
+  loading: boolean;
+  error: Error | null;
+}
+
+const EMPTY_PAGED: UsePagedState<never> = { items: [], total: 0, loading: true, error: null };
+
+function usePaged<Q, T>(
+  fetcher: (q: Q) => Promise<PagedResult<T>>,
+  query: Q,
+  cacheKey: string,
+): UsePagedState<T> {
+  const [state, setState] = useState<UsePagedState<T>>(EMPTY_PAGED as UsePagedState<T>);
+  useEffect(() => {
+    let cancelled = false;
+    setState((s) => ({ ...s, loading: true, error: null }));
+    fetcher(query)
+      .then((res) => {
+        if (cancelled) return;
+        setState({ items: res.items, total: res.total, loading: false, error: null });
+      })
+      .catch((err: Error) => {
+        if (cancelled) return;
+        setState((s) => ({ ...s, loading: false, error: err }));
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cacheKey]);
+  return state;
+}
+
+export function usePagedDeployments(params: {
+  page: number;
+  pageSize: number;
+  nameLike?: string;
+  tenantId?: string;
+  sort?: string;
+  order?: "asc" | "desc";
+}): UsePagedState<Deployment> {
+  const q: DeploymentPageQuery = {
+    start: (params.page - 1) * params.pageSize,
+    size: params.pageSize,
+    nameLike: params.nameLike,
+    tenantId: params.tenantId,
+    sort: params.sort,
+    order: params.order,
+  };
+  return usePaged(fetchDeploymentsPage, q, JSON.stringify(q));
+}
+
+export function usePagedDefinitions(params: {
+  page: number;
+  pageSize: number;
+  nameLike?: string;
+  tenantId?: string;
+  suspended?: boolean;
+  latest?: boolean;
+  sort?: string;
+  order?: "asc" | "desc";
+}): UsePagedState<ProcessDefinition> {
+  const q: DefinitionPageQuery = {
+    start: (params.page - 1) * params.pageSize,
+    size: params.pageSize,
+    nameLike: params.nameLike,
+    tenantId: params.tenantId,
+    suspended: params.suspended,
+    latest: params.latest,
+    sort: params.sort,
+    order: params.order,
+  };
+  return usePaged(fetchDefinitionsPage, q, JSON.stringify(q));
+}
+
+export function usePagedJobs(params: {
+  page: number;
+  pageSize: number;
+  jobType?: import("@/lib/types").JobKind;
+  sort?: string;
+  order?: "asc" | "desc";
+}): UsePagedState<EngineJob> {
+  const q: JobPageQuery = {
+    start: (params.page - 1) * params.pageSize,
+    size: params.pageSize,
+    jobType: params.jobType,
+    sort: params.sort,
+    order: params.order,
+  };
+  return usePaged(fetchJobsPage, q, JSON.stringify(q));
+}
 
 /* -------------------------------------------------------------------------- */
 /* Convenience re-exports                                                     */

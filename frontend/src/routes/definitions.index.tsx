@@ -5,7 +5,7 @@ import { AppShell } from "@/components/app-shell";
 import { RelTime } from "@/components/rel-time";
 import {
   activeCountForDefinition,
-  useDefinitions,
+  usePagedDefinitions,
   versionCount,
   type ProcessDefinition,
 } from "@/lib/store";
@@ -23,34 +23,24 @@ export const Route = createFileRoute("/definitions/")({
 });
 
 function DefinitionsListPage() {
-  const all = useDefinitions();
   const [q, setQ] = useState("");
   const [tenant, setTenant] = useState("all");
   const [status, setStatus] = useState<"all" | "active" | "suspended">("all");
 
-  const tenants = useMemo(() => Array.from(new Set(all.map((d) => d.tenantId))).sort(), [all]);
-
-  const rows = useMemo(() => {
-    const needle = q.trim().toLowerCase();
-    return all.filter((d) => {
-      if (tenant !== "all" && d.tenantId !== tenant) return false;
-      if (status === "suspended" && !d.isSuspended) return false;
-      if (status === "active" && d.isSuspended) return false;
-      if (!needle) return true;
-      return (
-        d.name.toLowerCase().includes(needle) ||
-        d.key.toLowerCase().includes(needle) ||
-        d.id.toLowerCase().includes(needle)
-      );
-    });
-  }, [all, q, tenant, status]);
-
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
-  useEffect(() => { setPage(1); }, [q, tenant, status, rows.length]);
-  const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
-  const safePage = Math.min(page, pageCount);
-  const pageRows = rows.slice((safePage - 1) * pageSize, safePage * pageSize);
+  useEffect(() => { setPage(1); }, [q, tenant, status, pageSize]);
+
+  const paged = usePagedDefinitions({
+    page,
+    pageSize,
+    nameLike: q.trim() || undefined,
+    tenantId: tenant !== "all" ? tenant : undefined,
+    suspended: status === "all" ? undefined : status === "suspended",
+    latest: true,
+  });
+
+  const tenants = useMemo(() => Array.from(new Set(paged.items.map((d) => d.tenantId))).sort(), [paged.items]);
 
   return (
     <AppShell>
@@ -60,7 +50,7 @@ function DefinitionsListPage() {
             <div>
               <h1 className="text-lg font-semibold tracking-tight">Process definitions</h1>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                {all.length} unique definition keys · click a row to see all versions.
+                {paged.total} unique definition keys · click a row to see all versions.
               </p>
             </div>
           </div>
@@ -74,7 +64,9 @@ function DefinitionsListPage() {
             />
             <Select label="Tenant" value={tenant} onChange={setTenant} options={[["all", "All tenants"], ...tenants.map((t) => [t, t] as [string, string])]} />
             <Select label="Status" value={status} onChange={(v) => setStatus(v as typeof status)} options={[["all", "Any status"], ["active", "Active"], ["suspended", "Suspended"]]} />
-            <span className="ml-auto mono text-[10px] text-muted-foreground">{rows.length} shown</span>
+            <span className="ml-auto mono text-[10px] text-muted-foreground">
+              {paged.loading ? "Loading…" : `${paged.items.length} shown`}
+            </span>
           </div>
 
           <div className="mt-3 overflow-hidden rounded-md border border-border bg-panel">
@@ -86,17 +78,19 @@ function DefinitionsListPage() {
               <div className="text-right">Active</div>
               <div className="text-right">Deployed</div>
             </div>
-            {rows.length === 0 ? (
+            {paged.error ? (
+              <div className="p-8 text-center text-xs text-danger">Failed to load definitions: {paged.error.message}</div>
+            ) : paged.items.length === 0 ? (
               <div className="p-8 text-center text-xs text-muted-foreground">
-                No definitions match those filters.
+                {paged.loading ? "Loading definitions…" : "No definitions match those filters."}
               </div>
             ) : (
-              pageRows.map((d, i) => <Row key={d.key} d={d} last={i === pageRows.length - 1} />)
+              paged.items.map((d, i) => <Row key={d.key} d={d} last={i === paged.items.length - 1} />)
             )}
           </div>
           <Pagination
-            total={rows.length}
-            page={safePage}
+            total={paged.total}
+            page={page}
             pageSize={pageSize}
             onPageChange={setPage}
             onPageSizeChange={(n) => { setPageSize(n); setPage(1); }}
